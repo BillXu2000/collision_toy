@@ -69,23 +69,24 @@ class newton:
     
     def newton(self, f, df, x0):
         pos = self.pos
-        pos.copy_from(x0)
-        return x0
-        n_iter = 5
         b = self.b
+        pos.copy_from(x0)
+        n_iter = 2
         for iter in range(n_iter):
             f(b, pos)
             ax_by(b, -1, b, 0, b)
-            self.dx.fill(0)
             def A(ans, dx):
                 return df(ans, pos, dx)
-            self.cg(self.dx, A, b)
-            ax_by(pos, 1, pos, 1, self.dx)
+            dx = self.cg(A, b)
+            ax_by(pos, 1, pos, 1, dx)
         return pos
     
-    def cg(self, x, A, b, x0=None):
+    def cg(self, A, b, x0=None):
+        x = self.dx
         if x0 is not None:
             x.copy_from(x0)
+        else:
+            x.fill(0)
         r = self.r
         p = self.p
         A_p = self.A_p
@@ -95,7 +96,7 @@ class newton:
         r_2 = dot(r, r)
         r_0 = r_2
         n_iter = 50
-        eps = 1e-9
+        eps = 1e-40
         if r_0 < 1e-20: return
         for iter in range(n_iter):
             A(A_p, p)
@@ -109,3 +110,9 @@ class newton:
             beta = r_2_new / r_2
             ax_by(p, 1, r, beta, p)
             r_2 = r_2_new
+        # print(iter, r_2)
+        A(A_p, x)
+        ax_by(r, 1, b, -1, A_p)
+        err = dot(r, r)
+        if not err < 1e-7: print(iter, err, r_2)
+        return x

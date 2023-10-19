@@ -19,8 +19,8 @@ dashpot_damping = ti.field(dtype=ti.f32, shape=())
 
 max_num_particles = 1024
 particle_mass = 1.0
-dt = 1e-3
-substeps = 10
+dt = 1e-2
+substeps = 1
 
 if args.implicit:
     dt *= substeps
@@ -43,7 +43,7 @@ def spring_force(f:ti.template(), x:ti.template()):
     # Compute force
     for i in range(n):
         # Gravity
-        f[i] = ti.Vector([0, -9.8]) * particle_mass
+        # f[i] += ti.Vector([0, -9.8]) * particle_mass
         for j in range(n):
             if rest_length[i, j] != 0:
                 x_ij = x[i] - x[j]
@@ -84,6 +84,7 @@ def advance_explicit():
                 v[i][d] = 0  # stop it from moving further
 
 def substep_explicit():
+    f.fill(0)
     spring_force(f, x)
     advance_explicit()
 
@@ -93,23 +94,26 @@ def dfdx(ans:ti.template(), pos:ti.template(), dx:ti.template()):
     for i in range(n):
         ans[i] = 0
         for j in range(n):
-            if rest_length[i, j] != 0:
+            if rest_length[i, j] != 0 and i != j:
                 x_ij = pos[i] - pos[j]
                 d = x_ij.normalized()
 
                 # df = -spring_Y[None] * (x_ij @ x_ij.transpose() * rest_length[i, j] / x_ij.norm()**3)
+
                 df = -spring_Y[None] * (d.outer_product(d))
                 if x_ij.norm() > rest_length[i, j]:
                     df += -spring_Y[None] * (x_ij.norm() - rest_length[i, j]) / x_ij.norm() * (ti.Matrix.identity(ti.f32, 2) - d.outer_product(d))
-                ans[i] += df @ dx[i]
+                ans[i] += df @ (dx[i] - dx[j])
+                # ans[i] += -spring_Y[None] * d * d.dot(dx[i])
     for i in range(n):
-        ans[i] = dx[i] - dt**2 * ans[i]
+        ans[i] = particle_mass * dx[i] - dt**2 * ans[i]
+        # ans[i] = particle_mass * dx[i]
 
 @ti.kernel
 def newton_gradient(f:ti.template(), x:ti.template()):
     n = num_particles[None]
     for i in range(n):
-        f[i] = (x[i] - (tmp_pos[i] + dt * v[i])) - dt**2 * f[i]
+        f[i] = particle_mass * (x[i] - (tmp_pos[i] + dt * v[i])) - dt**2 * f[i]
 
 def get_force(f, x):
     f.fill(0)
@@ -132,7 +136,7 @@ def advance_implicit(x_1:ti.template()):
                 v[i][d] = 0  # stop it from moving further
 
 def substep_implicit():
-    x_1 = newton.newton(spring_force, dfdx, x)
+    x_1 = newton.newton(get_force, dfdx, x)
     advance_implicit(x_1)
 
 @ti.kernel
@@ -167,7 +171,7 @@ def main():
 
     gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
 
-    spring_Y[None] = 1000
+    spring_Y[None] = 300
     drag_damping[None] = 1
     dashpot_damping[None] = 100
 
