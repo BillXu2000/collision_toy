@@ -103,7 +103,7 @@ def dfdx(ans:ti.template(), pos:ti.template(), dx:ti.template()):
                 df = -spring_Y[None] * (d.outer_product(d))
                 if x_ij.norm() > rest_length[i, j]:
                     df += -spring_Y[None] * (x_ij.norm() - rest_length[i, j]) / x_ij.norm() * (ti.Matrix.identity(ti.f32, 2) - d.outer_product(d))
-                ans[i] += df @ (dx[i] - dx[j])
+                ans[i] += df @ (dx[i] - dx[j]) / rest_length[i, j]
                 # ans[i] += -spring_Y[None] * d * d.dot(dx[i])
     for i in range(n):
         ans[i] = particle_mass * dx[i] - dt**2 * ans[i]
