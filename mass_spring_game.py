@@ -19,8 +19,10 @@ dashpot_damping = ti.field(dtype=ti.f32, shape=())
 
 max_num_particles = 1024
 particle_mass = 1.0
-dt = 1e-2
-substeps = 1
+dt = 1e-4
+substeps = 100
+n_wall = 1
+d_m = 1e-2
 
 if args.implicit:
     dt *= substeps
@@ -30,11 +32,26 @@ x = ti.Vector.field(2, dtype=ti.f32, shape=max_num_particles)
 v = ti.Vector.field(2, dtype=ti.f32, shape=max_num_particles)
 f = ti.Vector.field(2, dtype=ti.f32, shape=max_num_particles)
 fixed = ti.field(dtype=ti.i32, shape=max_num_particles)
+wall = ti.Vector.field(2, dtype=ti.f32, shape=n_wall) # (wall.x, wall.y).dot(x) <= wall.z
+wall_k = ti.field(dtype=ti.f32, shape=n_wall) # (wall.x, wall.y).dot(x) <= wall.z
 tmp_pos = x
 
 # rest_length[i, j] == 0 means i and j are NOT connected
 rest_length = ti.field(dtype=ti.f32, shape=(max_num_particles, max_num_particles))
 newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_num_particles))
+
+wall[0] = [-1, 0]
+wall_k[0] = 0
+
+@ti.kernel
+def wall_force(f:ti.template(), pos:ti.template()):
+    n = num_particles[None]
+    for i in range(n):
+        for j in range(n_wall):
+            d = wall_k[j] - wall[j].dot(pos[i])
+            if d >= d_m: continue
+            norm = (d_m - d) / d * (2 * d * ti.ln(d / d_m) + d - d_m)
+            f[i] += norm * wall[j].dot(pos[i]).normalized()
 
 @ti.kernel
 def spring_force(f:ti.template(), x:ti.template()):
@@ -86,11 +103,47 @@ def advance_explicit():
 def substep_explicit():
     f.fill(0)
     spring_force(f, x)
+    wall_force(f, x)
     advance_explicit()
+
+@ti.kernel
+def energy_newton(pos:ti.template()) -> ti.f32:
+    n = num_particles[None]
+    energy_p = 0.
+
+    # wall
+    for i in range(n):
+        for j in range(n_wall):
+            d = wall_k[j] - wall[j].dot(pos[i])
+            if d <= 0: energy += float('inf')
+            elif d < d_m:
+                energy += -(d_m - d)**2 * ti.log(d / d_m)
+    
+    # spring
+    for i in range(n):
+        for j in range(n):
+            if rest_length[i, j] != 0 and i != j:
+                x_ij = pos[i] - pos[j]
+                energy_p += .5 * spring_Y[None] * (x_ij.norm() - rest_length[i, j])**2
+    
+    #inertia
+    energy_inertia = 0.
+    for i in range(n):
+        dx = x[i] - (tmp_pos[i] + dt * v[i])
+        energy_inertia += .5 * dx.dot(dx) * particle_mass
+    
+    return energy_inertia + dt**2 * energy_p
 
 @ti.kernel
 def dfdx(ans:ti.template(), pos:ti.template(), dx:ti.template()):
     n = num_particles[None]
+    for i in range(n):
+        for j in range(n_wall):
+            d = wall_k[j] - wall[j].dot(pos[i])
+            if d >= d_m: continue
+            w = wall[j].normalized()
+            ans[i] += ((d_m/d)**2 + 2 * d_m/d - 2 * ti.ln(d/d_m) - 3) * w * w.dot(dx)
+
     for i in range(n):
         ans[i] = 0
         for j in range(n):
@@ -136,7 +189,7 @@ def advance_implicit(x_1:ti.template()):
                 v[i][d] = 0  # stop it from moving further
 
 def substep_implicit():
-    x_1 = newton.newton(get_force, dfdx, x)
+    x_1 = newton.newton(energy_newton, get_force, dfdx, x)
     advance_implicit(x_1)
 
 @ti.kernel
@@ -162,16 +215,13 @@ def new_particle(pos_x: ti.f32, pos_y: ti.f32, fixed_: ti.i32):
 def attract(pos_x: ti.f32, pos_y: ti.f32):
     for i in range(num_particles[None]):
         p = ti.Vector([pos_x, pos_y])
-        v[i] += -dt * substeps * (x[i] - p) * 100
+        v[i] += -dt * substeps * (x[i] - p)
 
 
 def main():
-
-
-
     gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
 
-    spring_Y[None] = 300
+    spring_Y[None] = 1000
     drag_damping[None] = 1
     dashpot_damping[None] = 100
 

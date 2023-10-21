@@ -67,7 +67,7 @@ class newton:
         self.A_p = gen_field()
         self.pos = gen_field()
     
-    def newton(self, f, df, x0):
+    def newton(self, energy, f, df, x0):
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
@@ -78,7 +78,15 @@ class newton:
             def A(ans, dx):
                 return df(ans, pos, dx)
             dx = self.cg(A, b)
-            ax_by(pos, 1, pos, 1, dx)
+            e_0 = energy(pos)
+            x_1 = b
+            alpha = 1.0
+            def ene():
+                ax_by(x_1, 1, pos, alpha, dx)
+                return energy(x_1)
+            while ene() > e_0:
+                alpha /= 2
+            ax_by(pos, 1, pos, alpha, dx)
         return pos
     
     def cg(self, A, b, x0=None):
