@@ -71,22 +71,30 @@ class newton:
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
-        n_iter = 2
+        n_iter = 5
         for iter in range(n_iter):
             f(b, pos)
+            # print(f'iter = {iter}, b = {b.to_numpy()[:5]}')
             ax_by(b, -1, b, 0, b)
             def A(ans, dx):
                 return df(ans, pos, dx)
             dx = self.cg(A, b)
+            # print(f'iter = {iter}, dx = {dx.to_numpy()[:5]}')
             e_0 = energy(pos)
             x_1 = b
             alpha = 1.0
             def ene():
                 ax_by(x_1, 1, pos, alpha, dx)
-                return energy(x_1)
-            while ene() > e_0:
+                ans = energy(x_1)
+                # print(f'alpha = {alpha}, ans = {ans}, e_0 = {e_0}')
+                return ans
+            while not ene() <= e_0:
                 alpha /= 2
+            d_e = ene() - e_0
             ax_by(pos, 1, pos, alpha, dx)
+            mi = pos.to_numpy()[:3, 1].min()
+            # print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
+            # if mi <= 1e-3: exit(0)
         return pos
     
     def cg(self, A, b, x0=None):
@@ -109,6 +117,7 @@ class newton:
         for iter in range(n_iter):
             A(A_p, p)
             dot_ans = dot(p, A_p)
+            if dot_ans < eps: break
             alpha = r_2 / dot_ans
             ax_by(x, 1, x, alpha, p)
             ax_by(r, 1, r, -alpha, A_p)
@@ -118,9 +127,9 @@ class newton:
             beta = r_2_new / r_2
             ax_by(p, 1, r, beta, p)
             r_2 = r_2_new
-        # print(iter, r_2)
+        # print('cg', iter, r_2)
         A(A_p, x)
         ax_by(r, 1, b, -1, A_p)
         err = dot(r, r)
-        if not err < 1e-7: print(iter, err, r_2)
+        # if not err < 1e-7: print(iter, err, r_2)
         return x

@@ -34,13 +34,20 @@ f = ti.Vector.field(2, dtype=ti.f32, shape=max_num_particles)
 fixed = ti.field(dtype=ti.i32, shape=max_num_particles)
 wall = ti.Vector.field(2, dtype=ti.f32, shape=n_wall) # (wall.x, wall.y).dot(x) <= wall.z
 wall_k = ti.field(dtype=ti.f32, shape=n_wall) # (wall.x, wall.y).dot(x) <= wall.z
+attracted = ti.field(dtype=ti.i32, shape=())
+attract_xy = ti.Vector.field(2, dtype=ti.f32, shape=())
+attracted_k = 0.2
 tmp_pos = x
+
+enable_gravity = True
+# enable_gravity = False
+
 
 # rest_length[i, j] == 0 means i and j are NOT connected
 rest_length = ti.field(dtype=ti.f32, shape=(max_num_particles, max_num_particles))
 newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_num_particles))
 
-wall[0] = [-1, 0]
+wall[0] = [0, -1]
 wall_k[0] = 0
 
 @ti.kernel
@@ -50,8 +57,10 @@ def wall_force(f:ti.template(), pos:ti.template()):
         for j in range(n_wall):
             d = wall_k[j] - wall[j].dot(pos[i])
             if d >= d_m: continue
-            norm = (d_m - d) / d * (2 * d * ti.ln(d / d_m) + d - d_m)
-            f[i] += norm * wall[j].dot(pos[i]).normalized()
+            norm = (d_m - d) / d * (2 * d * ti.log(d / d_m) + d - d_m)
+            # f[i] += norm * wall[j].dot(pos[i].normalized())
+            f[i] += norm * wall[j]
+            print(233, d_m, d, norm, norm * wall[j], f[i])
 
 @ti.kernel
 def spring_force(f:ti.template(), x:ti.template()):
@@ -60,7 +69,10 @@ def spring_force(f:ti.template(), x:ti.template()):
     # Compute force
     for i in range(n):
         # Gravity
-        # f[i] += ti.Vector([0, -9.8]) * particle_mass
+        if enable_gravity:
+            f[i] += ti.Vector([0, -9.8]) * particle_mass
+        if attracted[None]:
+            f[i] += spring_Y[None] * (attract_xy[None] - x[i]) * attracted_k
         for j in range(n):
             if rest_length[i, j] != 0:
                 x_ij = x[i] - x[j]
@@ -103,21 +115,28 @@ def advance_explicit():
 def substep_explicit():
     f.fill(0)
     spring_force(f, x)
-    wall_force(f, x)
     advance_explicit()
 
 @ti.kernel
 def energy_newton(pos:ti.template()) -> ti.f32:
     n = num_particles[None]
     energy_p = 0.
+    inf_flag = False
 
     # wall
     for i in range(n):
+        # gravity
+        if enable_gravity:
+            energy_p += pos[i].y * 9.8 * particle_mass
+        # attract
+        if attracted[None]:
+            energy_p += .5 * spring_Y[None] * (attract_xy[None] - pos[i]).norm_sqr() * attracted_k
         for j in range(n_wall):
             d = wall_k[j] - wall[j].dot(pos[i])
-            if d <= 0: energy += float('inf')
+            if d <= 0: 
+                inf_flag = True
             elif d < d_m:
-                energy += -(d_m - d)**2 * ti.log(d / d_m)
+                energy_p += -(d_m - d)**2 * ti.log(d / d_m)
     
     # spring
     for i in range(n):
@@ -129,23 +148,33 @@ def energy_newton(pos:ti.template()) -> ti.f32:
     #inertia
     energy_inertia = 0.
     for i in range(n):
-        dx = x[i] - (tmp_pos[i] + dt * v[i])
+        dx = pos[i] - (tmp_pos[i] + dt * v[i])
         energy_inertia += .5 * dx.dot(dx) * particle_mass
     
-    return energy_inertia + dt**2 * energy_p
+    # print(energy_inertia, dt**2 * energy_p)
+    ans = energy_inertia + dt**2 * energy_p
+    if inf_flag:
+        ans = float('inf')
+    # print(inf_flag, ans)
+    return ans
 
 @ti.kernel
 def dfdx(ans:ti.template(), pos:ti.template(), dx:ti.template()):
     n = num_particles[None]
+    ans.fill(0)
     for i in range(n):
         for j in range(n_wall):
             d = wall_k[j] - wall[j].dot(pos[i])
             if d >= d_m: continue
             w = wall[j].normalized()
-            ans[i] += ((d_m/d)**2 + 2 * d_m/d - 2 * ti.ln(d/d_m) - 3) * w * w.dot(dx)
+            norm = ((d_m/d)**2 + 2 * d_m/d - 2 * ti.log(d/d_m) - 3)
+            # ans[i] += norm * w * w.dot(dx[i])
+            # print(norm, dx[i], norm * w * w.dot(dx[i]))
 
     for i in range(n):
-        ans[i] = 0
+        # attract
+        if attracted[None]:
+            ans[i] += -spring_Y[None] * dx[i] * attracted_k
         for j in range(n):
             if rest_length[i, j] != 0 and i != j:
                 x_ij = pos[i] - pos[j]
@@ -167,10 +196,12 @@ def newton_gradient(f:ti.template(), x:ti.template()):
     n = num_particles[None]
     for i in range(n):
         f[i] = particle_mass * (x[i] - (tmp_pos[i] + dt * v[i])) - dt**2 * f[i]
+        # print(i, particle_mass * (x[i] - (tmp_pos[i] + dt * v[i])), dt**2 * f[i])
 
 def get_force(f, x):
     f.fill(0)
     spring_force(f, x)
+    wall_force(f, x)
     newton_gradient(f, x)
 
 @ti.kernel
@@ -215,7 +246,7 @@ def new_particle(pos_x: ti.f32, pos_y: ti.f32, fixed_: ti.i32):
 def attract(pos_x: ti.f32, pos_y: ti.f32):
     for i in range(num_particles[None]):
         p = ti.Vector([pos_x, pos_y])
-        v[i] += -dt * substeps * (x[i] - p)
+        v[i] += -dt * substeps * (x[i] - p) * 10
 
 
 def main():
@@ -230,6 +261,13 @@ def main():
     new_particle(0.4, 0.4, False)
 
     while True:
+        def substep():
+            if args.implicit:
+                substep_implicit()
+            else:
+                for step in range(substeps):
+                    substep_explicit()
+            # print('min', x.to_numpy()[:num_particles[None], 1].min())
         for e in gui.get_events(ti.GUI.PRESS):
             if e.key in [ti.GUI.ESCAPE, ti.GUI.EXIT]:
                 exit()
@@ -255,20 +293,23 @@ def main():
                     dashpot_damping[None] /= 1.1
                 else:
                     dashpot_damping[None] *= 1.1
+            elif e.key == "n":
+                substep()
 
         if gui.is_pressed(ti.GUI.RMB):
             cursor_pos = gui.get_cursor_pos()
-            attract(cursor_pos[0], cursor_pos[1])
+            # attract(cursor_pos[0], cursor_pos[1])
+            attracted[None] = 1
+            attract_xy[None] = [cursor_pos[0], cursor_pos[1]]
+        else:
+            attracted[None] = 0
 
         if not paused[None]:
-            if args.implicit:
-                substep_implicit()
-            else:
-                for step in range(substeps):
-                    substep_explicit()
+            substep()
 
         X = x.to_numpy()
         n = num_particles[None]
+        # print(X[:n])
 
         # Draw the springs
         for i in range(n):
