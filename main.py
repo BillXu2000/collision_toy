@@ -5,7 +5,7 @@ if __name__ == '__main__':
 
     ti.init(arch=ti.cpu)
 
-    max_n = int(1e5)
+    max_n = int(1e3)
 
     state = lambda: state
     state.n = ti.field(dtype=ti.i32, shape=())
@@ -16,11 +16,14 @@ if __name__ == '__main__':
 
     state.n[None] = 0
     state.mass.fill(1)
+    state.x.fill(-1)
 
-    springs = toy.force.Springs()
-    forces = toy.force.Forces([springs, toy.force.Gravity()])
-    implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
     spring_Y = 10000
+    springs = toy.force.Springs()
+    attraction = toy.force.Attraction(spring_Y * .01)
+    walls = toy.force.Walls([[0, -1], [0, 1], [-1, 0], [1, 0]], [0, 1, 0, 1], k=spring_Y, d_m=1e-2)
+    forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls])
+    implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
     dt = 1e-2
 
     @ti.kernel
@@ -61,18 +64,19 @@ if __name__ == '__main__':
         for i in range(n):
             v[i] = (x_1[i] - x[i]) / dt
             x[i] = x_1[i]
-            for d in ti.static(range(2)):
-                if x[i][d] < 0:  # Bottom and left
-                    x[i][d] = 0  # move particle inside
-                    v[i][d] = 0  # stop it from moving further
+            # for d in ti.static(range(2)):
+            #     if x[i][d] < 0:  # Bottom and left
+            #         x[i][d] = 0  # move particle inside
+            #         v[i][d] = 0  # stop it from moving further
 
-                if x[i][d] > 1:  # Top and right
-                    x[i][d] = 1  # move particle inside
-                    v[i][d] = 0  # stop it from moving further
+            #     if x[i][d] > 1:  # Top and right
+            #         x[i][d] = 1  # move particle inside
+            #         v[i][d] = 0  # stop it from moving further
     
     newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
 
     def substep_implicit():
+        toy.cg.newton.n = state.n
         implicit.set_target(state.x, state.v, state.mass, dt, state.n[None])
         x_1 = newton.newton(implicit.energy, implicit.gradient, implicit.hessian, state.x)
         advance_implicit(x_1)
@@ -93,20 +97,33 @@ if __name__ == '__main__':
     new_particle(.3, .4)
     new_particle(.4, .4)
 
-    gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
+    # gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
+    window = ti.ui.Window("Taichi MLS-MPM-128", res=(512, 512), vsync=True)
+    canvas = window.get_canvas()
+    canvas.set_background_color((.9,)*3)
 
-    while gui.running:
-        for e in gui.get_events(ti.GUI.PRESS):
-            if e.key in [ti.GUI.ESCAPE, ti.GUI.EXIT]:
-                gui.running = False
-
-        for i in range(springs.m[None]):
-            v = springs.vert[i]
-            if v[0] < state.n[None] and v[1] < state.n[None]:
-                gui.line(begin=state.x[v[0]], end=state.x[v[1]], radius=2, color=0x444444)
+    while window.running:
+        # for i in range(springs.m[None]):
+        #     v = springs.vert[i]
+        #     if v[0] < state.n[None] and v[1] < state.n[None]:
+        #         gui.line(begin=state.x[v[0]], end=state.x[v[1]], radius=2, color=0x444444)
         
-        for i in range(state.n[None]):
-            c = 0x111111
-            gui.circle(pos=state.x[i], color=c, radius=5)
+        # for i in range(state.n[None]):
+        #     c = 0x111111
+        #     gui.circle(pos=state.x[i], color=c, radius=5)
+        if not window.is_pressed("v"):
+            canvas.circles(centers=state.x, radius=.01, color=(.6,)*3)
+            canvas.lines(state.x, width=.004, indices=springs.vert)
         substep_implicit()
-        gui.show()
+        window.show()
+        mouse = window.get_cursor_pos()
+        for e in window.get_events(ti.ui.PRESS):
+            if e.key in [ti.ui.ESCAPE]:
+                window.running = False
+            elif e.key == ti.ui.LMB:
+                new_particle(*mouse)
+        if window.is_pressed(ti.ui.RMB):
+            attraction.activate(mouse)
+        else:
+            attraction.deactivate()
+

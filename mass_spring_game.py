@@ -5,6 +5,7 @@
 import taichi as ti
 import toy
 import argparse
+import numpy as np
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-i', '--implicit', action='store_true')
@@ -21,7 +22,7 @@ max_num_particles = 1024
 particle_mass = 1.0
 dt = 1e-4
 substeps = 100
-n_wall = 1
+n_wall = 4
 d_m = 1e-2
 
 if args.implicit:
@@ -46,9 +47,10 @@ enable_gravity = True
 # rest_length[i, j] == 0 means i and j are NOT connected
 rest_length = ti.field(dtype=ti.f32, shape=(max_num_particles, max_num_particles))
 newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_num_particles))
+toy.cg.newton.n = num_particles
 
-wall[0] = [0, -1]
-wall_k[0] = 0
+wall.from_numpy(np.array([[0, -1], [0, 1], [-1, 0], [1, 0]]))
+wall_k.from_numpy(np.array([0, 1, 0, 1]))
 
 @ti.kernel
 def wall_force(f:ti.template(), pos:ti.template()):
@@ -60,7 +62,7 @@ def wall_force(f:ti.template(), pos:ti.template()):
             norm = (d_m - d) / d * (2 * d * ti.log(d / d_m) + d - d_m)
             # f[i] += norm * wall[j].dot(pos[i].normalized())
             f[i] += norm * wall[j]
-            print(233, d_m, d, norm, norm * wall[j], f[i])
+            # print(233, d_m, d, norm, norm * wall[j], f[i])
 
 @ti.kernel
 def spring_force(f:ti.template(), x:ti.template()):
@@ -168,7 +170,7 @@ def dfdx(ans:ti.template(), pos:ti.template(), dx:ti.template()):
             if d >= d_m: continue
             w = wall[j].normalized()
             norm = ((d_m/d)**2 + 2 * d_m/d - 2 * ti.log(d/d_m) - 3)
-            # ans[i] += norm * w * w.dot(dx[i])
+            ans[i] += -norm * w * w.dot(dx[i])
             # print(norm, dx[i], norm * w * w.dot(dx[i]))
 
     for i in range(n):
@@ -210,14 +212,14 @@ def advance_implicit(x_1:ti.template()):
     for i in range(n):
         v[i] = (x_1[i] - x[i]) / dt
         x[i] = x_1[i]
-        for d in ti.static(range(2)):
-            if x[i][d] < 0:  # Bottom and left
-                x[i][d] = 0  # move particle inside
-                v[i][d] = 0  # stop it from moving further
+        # for d in ti.static(range(2)):
+        #     if x[i][d] < 0:  # Bottom and left
+        #         x[i][d] = 0  # move particle inside
+        #         v[i][d] = 0  # stop it from moving further
 
-            if x[i][d] > 1:  # Top and right
-                x[i][d] = 1  # move particle inside
-                v[i][d] = 0  # stop it from moving further
+        #     if x[i][d] > 1:  # Top and right
+        #         x[i][d] = 1  # move particle inside
+        #         v[i][d] = 0  # stop it from moving further
 
 def substep_implicit():
     x_1 = newton.newton(energy_newton, get_force, dfdx, x)

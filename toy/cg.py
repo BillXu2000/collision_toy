@@ -2,7 +2,7 @@ import taichi as ti
 
 @ti.kernel
 def ax_by(z: ti.template(), a: ti.f32, x: ti.template(), b: ti.f32, y: ti.template()):
-    for i in z:
+    for i in range(newton.n[None]):
         z[i] = a * x[i] + b * y[i]
 
 @ti.kernel
@@ -19,7 +19,7 @@ def vec_mul(z: ti.template(), x: ti.template(), y: ti.template()):
 @ti.kernel
 def dot(a: ti.template(), b: ti.template()) -> ti.f32:
     ans = 0.0
-    for i in a:
+    for i in range(newton.n[None]):
         ans += a[i].dot(b[i])
     return ans
 
@@ -71,7 +71,7 @@ class newton:
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
-        n_iter = 5
+        n_iter = 3
         for iter in range(n_iter):
             f(b, pos)
             # print(f'iter = {iter}, b = {b.to_numpy()[:5]}')
@@ -111,8 +111,8 @@ class newton:
         p.copy_from(r)
         r_2 = dot(r, r)
         r_0 = r_2
-        n_iter = 50
-        eps = 1e-40
+        n_iter = 10
+        eps = 1e-10
         if r_0 < 1e-20: return
         for iter in range(n_iter):
             A(A_p, p)
