@@ -22,7 +22,9 @@ if __name__ == '__main__':
     springs = toy.force.Springs()
     attraction = toy.force.Attraction(spring_Y * .01)
     walls = toy.force.Walls([[0, -1], [0, 1], [-1, 0], [1, 0]], [0, 1, 0, 1], k=spring_Y, d_m=1e-2)
-    forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls])
+    collision = toy.force.Collision(state.n, springs, k=spring_Y, d_m=1e-2)
+    forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls, collision])
+    # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls])
     implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
     dt = 1e-2
 
@@ -78,7 +80,7 @@ if __name__ == '__main__':
     def substep_implicit():
         toy.cg.newton.n = state.n
         implicit.set_target(state.x, state.v, state.mass, dt, state.n[None])
-        x_1 = newton.newton(implicit.energy, implicit.gradient, implicit.hessian, state.x)
+        x_1 = newton.newton(implicit.energy, implicit.gradient, implicit.hessian, state.x, collision)
         advance_implicit(x_1)
 
     def new_particle(pos_x, pos_y):
@@ -101,6 +103,7 @@ if __name__ == '__main__':
     window = ti.ui.Window("Taichi MLS-MPM-128", res=(512, 512), vsync=True)
     canvas = window.get_canvas()
     canvas.set_background_color((.9,)*3)
+    pause = False
 
     while window.running:
         # for i in range(springs.m[None]):
@@ -114,7 +117,8 @@ if __name__ == '__main__':
         if not window.is_pressed("v"):
             canvas.circles(centers=state.x, radius=.01, color=(.6,)*3)
             canvas.lines(state.x, width=.004, indices=springs.vert)
-        substep_implicit()
+        if not pause:
+            substep_implicit()
         window.show()
         mouse = window.get_cursor_pos()
         for e in window.get_events(ti.ui.PRESS):
@@ -122,6 +126,10 @@ if __name__ == '__main__':
                 window.running = False
             elif e.key == ti.ui.LMB:
                 new_particle(*mouse)
+            elif e.key == 'n':
+                substep_implicit()
+            elif e.key == ' ':
+                pause = not pause
         if window.is_pressed(ti.ui.RMB):
             attraction.activate(mouse)
         else:

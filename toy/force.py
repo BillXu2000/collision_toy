@@ -66,6 +66,152 @@ class Forces:
     def append(self, model):
         self.models.append(model)
 
+@ti.func
+def barrier(d: ti.f32, dm: ti.f32) -> ti.f32:
+    return -(d - dm)**2 * ti.log(d / dm)
+
+@ti.func
+def f_barrier(d: ti.f32, dm: ti.f32) -> ti.f32:
+    return -(dm - d) / d * (-dm + 2 * d * ti.log(d / dm) + d) # f = -de/d(d)
+
+@ti.func
+def df_barrier(d: ti.f32, dm: ti.f32) -> ti.f32:
+    return -((dm / d)**2 + 2 * dm / d - 2 * ti.log(d / dm) - 3)
+
+@ti.func
+def sign(d: ti.f32) -> ti.f32:
+    ans = 1
+    if d < 0: ans = -1
+    return ans
+
+@ti.func
+def solve2d(coe: ti.template(), x: ti.template(), n: ti.template()):
+    a = coe[2]
+    b = coe[1]
+    c = coe[0]
+    delta = b**2 - 4 * a * c
+    if delta < 0: 
+        n = 0
+    else:
+        n = 2
+        if delta == 0: n = 1
+        x[0] = -(2 * c) / (b + sign(b) * ti.sqrt(delta))
+        x[1] = -(b + sign(b) * ti.sqrt(delta)) / (2 * a)
+        if x[0] > x[1]:
+            tmp = x[0]
+            x[0] = x[1]
+            x[1] = tmp
+
+@ti.func
+def check(i, j, k, t, x, dx, dm) -> ti.i32:
+    v = (x[i] + dx[i] * t) - (x[j] + dx[j] * t)
+    u = (x[k] + dx[k] * t) - (x[j] + dx[j] * t)
+    # return -dm < v.dot(u / u.norm_sqr()) < 1 + dm
+    return 0 < v.dot(u / u.norm_sqr()) < 1
+
+@ti.func
+def collision_test(i, j, k, x, dm, v: ti.template(), d: ti.template()) -> ti.i32:
+    flag = 1
+    if i == j or i == k: flag = 0
+    p = x[i] - x[j]
+    q = x[k] - x[j]
+    t = p.dot(q / q.norm_sqr())
+    if t < -dm or t > 1 + dm: flag = 0
+    d_signed = p.cross(q.normalized())
+    d = ti.abs(d_signed)
+    assert flag == 0 or 0 < d
+    if d > dm: flag = 0
+    v = ti.Vector([j, i, k], dt=ti.i32)
+    if d_signed < 0:
+        v[0] = i
+        v[1] = j
+    return flag
+        
+@ti.data_oriented
+class Collision:
+    def __init__(self, n, springs, k, d_m):
+        self.n = n
+        self.springs = springs
+        self.k = k
+        self.d_m = d_m
+    
+    @ti.kernel
+    def ccd(self, x: ti.template(), dx: ti.template()) -> ti.f32:
+        alpha = 1.0
+        verts = ti.static(self.springs.vert)
+        for i in range(self.n[None]):
+            for j in range(self.springs.m[None]):
+                if verts[j][0] == i or verts[j][1] == i: continue
+                a0 = (x[verts[j][0]] - x[i]).cross(x[verts[j][1]] - x[i])
+                a1 = (dx[verts[j][0]] - dx[i]).cross(x[verts[j][1]] - x[i]) + (x[verts[j][0]] - x[i]).cross(dx[verts[j][1]] - dx[i])
+                a2 = (dx[verts[j][0]] - dx[i]).cross(dx[verts[j][1]] - dx[i])
+                if sign(a0) != sign(a0 + a1 + a2): print(i, j)
+                if a0 == 0: continue
+                a0 *= 0.99
+                xs = ti.Vector([0, 0], dt=ti.f32)
+                n_x = 0
+                solve2d(ti.Vector([a0, a1, a2]), xs, n_x)
+                if sign(a0) != sign(a0 + a1 + a2): print(i, j, n_x, xs[0], xs[1])
+                if n_x == 0: continue
+                ans = 2
+                if 0 < xs[1] < 1:
+                    if check(i, verts[j][0], verts[j][1], xs[1], x, dx, self.d_m): ans = xs[1]
+                if 0 < xs[0] < 1:
+                    if check(i, verts[j][0], verts[j][1], xs[0], x, dx, self.d_m): ans = xs[0]
+                if ans < 1: ti.atomic_min(alpha, ans)
+        return alpha
+
+    @ti.kernel
+    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
+        verts = ti.static(self.springs.vert)
+        dm = ti.static(self.d_m)
+        ans = .0
+        for i in range(self.n[None]):
+            for j in range(self.springs.m[None]):
+                v = ti.Vector([-1, -1, -1], dt=ti.i32)
+                d = 0.
+                if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 0: continue
+                ans += barrier(d, dm) * self.k
+        return ans
+
+    @ti.kernel
+    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
+        verts = ti.static(self.springs.vert)
+        dm = ti.static(self.d_m)
+        for i in range(n):
+            for j in range(self.springs.m[None]):
+                v = ti.Vector([-1, -1, -1], dt=ti.i32)
+                d = 0.
+                if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 0: continue
+                length = (x[verts[j][0]] - x[verts[j][1]]).norm()
+                for k in ti.static(range(3)):
+                    dfdd = f_barrier(d, dm) * self.k
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                    f[v[(k + 2) % 3]] += dfdd * dddx
+    
+    @ti.kernel
+    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
+        verts = ti.static(self.springs.vert)
+        dm = ti.static(self.d_m)
+        for i in range(n):
+            for j in range(self.springs.m[None]):
+                v = ti.Vector([-1, -1, -1], dt=ti.i32)
+                d = 0.
+                if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 0: continue
+                length = (x[verts[j][0]] - x[verts[j][1]]).norm()
+                for k in ti.static(range(3)):
+                    dfdd = f_barrier(d, dm) * self.k
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (dx[v[(k + 1) % 3]] - dx[v[k]]) / length
+                    f[v[(k + 2) % 3]] += dfdd * dddx
+                s = 0.
+                for k in ti.static(range(3)):
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                    s += dddx.dot(dx[v[(k + 2) % 3]])
+                for k in ti.static(range(3)):
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                    ddf = df_barrier(d, dm) * self.k
+                    f[v[(k + 2) % 3]] += ddf * dddx * s
+
 @ti.data_oriented
 class Walls:
     def __init__(self, a, b, k, d_m):
@@ -90,7 +236,7 @@ class Walls:
                 if d <= 0: 
                     inf_flag = 1
                 if 0 < d < self.d_m:
-                    ans += -(self.d_m - d)**2 * ti.log(d / self.d_m) * self.k
+                    ans += barrier(d, self.d_m) * self.k
         if inf_flag: ans = float('inf')
         return ans
 
@@ -102,7 +248,7 @@ class Walls:
                 d = self.b[j] - self.a[j].dot(x[i])
                 assert 0 < d
                 if 0 < d < self.d_m:
-                    dfdd = -(d_m - d) / d * (-d_m + 2 * d * ti.log(d / d_m) + d) * self.k # f = -de/d(d)
+                    dfdd = f_barrier(d, d_m) * self.k
                     f[i] += dfdd * (-self.a[j]) # d(d)/dx
     
     @ti.kernel
@@ -113,7 +259,7 @@ class Walls:
                 d = self.b[j] - self.a[j].dot(x[i])
                 assert 0 < d
                 if 0 < d < self.d_m:
-                    ddf = -((d_m / d)**2 + 2 * d_m / d - 2 * ti.log(d/d_m) - 3) * self.k
+                    ddf = df_barrier(d, d_m) * self.k
                     f[i] += ddf * self.a[j] * self.a[j].dot(dx[i])
 
 @ti.data_oriented

@@ -67,11 +67,11 @@ class newton:
         self.A_p = gen_field()
         self.pos = gen_field()
     
-    def newton(self, energy, f, df, x0):
+    def newton(self, energy, f, df, x0, collision = None):
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
-        n_iter = 3
+        n_iter = 10
         for iter in range(n_iter):
             f(b, pos)
             # print(f'iter = {iter}, b = {b.to_numpy()[:5]}')
@@ -79,21 +79,27 @@ class newton:
             def A(ans, dx):
                 return df(ans, pos, dx)
             dx = self.cg(A, b)
+            if dot(dx, dx) < 1e-10: break
             # print(f'iter = {iter}, dx = {dx.to_numpy()[:5]}')
             e_0 = energy(pos)
             x_1 = b
-            alpha = 1.0
+            if collision is not None:
+                alpha = collision.ccd(pos, dx)
+            else:
+                alpha = 1.0
+            if alpha < 1.0: alpha *= 0.9
             def ene():
                 ax_by(x_1, 1, pos, alpha, dx)
                 ans = energy(x_1)
                 # print(f'alpha = {alpha}, ans = {ans}, e_0 = {e_0}')
+                # if alpha < 1e-9: exit(0)
                 return ans
             while not ene() <= e_0:
                 alpha /= 2
             d_e = ene() - e_0
             ax_by(pos, 1, pos, alpha, dx)
             mi = pos.to_numpy()[:3, 1].min()
-            # print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
+            print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
             # if mi <= 1e-3: exit(0)
         return pos
     
