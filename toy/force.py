@@ -145,20 +145,21 @@ class Collision:
                 a0 = (x[verts[j][0]] - x[i]).cross(x[verts[j][1]] - x[i])
                 a1 = (dx[verts[j][0]] - dx[i]).cross(x[verts[j][1]] - x[i]) + (x[verts[j][0]] - x[i]).cross(dx[verts[j][1]] - dx[i])
                 a2 = (dx[verts[j][0]] - dx[i]).cross(dx[verts[j][1]] - dx[i])
-                if sign(a0) != sign(a0 + a1 + a2): print(i, j)
+                # if sign(a0) != sign(a0 + a1 + a2): print(i, j)
                 if a0 == 0: continue
-                a0 *= 0.99
+                # a0 *= 0.99
                 xs = ti.Vector([0, 0], dt=ti.f32)
                 n_x = 0
                 solve2d(ti.Vector([a0, a1, a2]), xs, n_x)
-                if sign(a0) != sign(a0 + a1 + a2): print(i, j, n_x, xs[0], xs[1])
+                # if sign(a0) != sign(a0 + a1 + a2): print(i, j, n_x, xs[0], xs[1])
                 if n_x == 0: continue
-                ans = 2
+                ans = 2.0
                 if 0 < xs[1] < 1:
                     if check(i, verts[j][0], verts[j][1], xs[1], x, dx, self.d_m): ans = xs[1]
                 if 0 < xs[0] < 1:
                     if check(i, verts[j][0], verts[j][1], xs[0], x, dx, self.d_m): ans = xs[0]
-                if ans < 1: ti.atomic_min(alpha, ans)
+                if ans == 0: print(i, j, xs[0], xs[1])
+                if 0 < ans < 1: ti.atomic_min(alpha, ans)
         return alpha
 
     @ti.kernel
@@ -172,6 +173,11 @@ class Collision:
                 d = 0.
                 if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 0: continue
                 ans += barrier(d, dm) * self.k
+        for i in range(self.n[None]):
+            for j in range(i):
+                xij = x[i] - x[j]
+                if xij.norm() > dm: continue
+                ans += barrier(xij.norm(), dm) * self.k
         return ans
 
     @ti.kernel
@@ -188,6 +194,14 @@ class Collision:
                     dfdd = f_barrier(d, dm) * self.k
                     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
                     f[v[(k + 2) % 3]] += dfdd * dddx
+        for i in range(self.n[None]):
+            for j in range(i):
+                xij = x[i] - x[j]
+                if xij.norm() > dm: continue
+                dfdd = f_barrier(xij.norm(), dm) * self.k
+                dddx = xij.normalized()
+                f[i] += dfdd * dddx
+                f[j] -= dfdd * dddx
     
     @ti.kernel
     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
@@ -211,6 +225,19 @@ class Collision:
                     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
                     ddf = df_barrier(d, dm) * self.k
                     f[v[(k + 2) % 3]] += ddf * dddx * s
+        for i in range(self.n[None]):
+            for j in range(i):
+                xij = x[i] - x[j]
+                d = xij.norm()
+                if xij.norm() > dm: continue
+                ddf = df_barrier(d, dm) * self.k
+                dddx = xij * xij.dot(dx[i] - dx[j])
+                tmp = ddf * dddx
+                dfdd = f_barrier(d, dm) * self.k
+                ddd = (ti.Matrix.identity(ti.f32, 2) - xij.outer_product(xij) / xij.norm_sqr()) @ (dx[i] - dx[j]) / d
+                tmp += dfdd * ddd
+                f[i] += tmp
+                f[j] -= tmp
 
 @ti.data_oriented
 class Walls:

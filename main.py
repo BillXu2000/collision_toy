@@ -13,6 +13,8 @@ if __name__ == '__main__':
     state.v = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
     state.f = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
     state.mass = ti.field(dtype=ti.f32, shape=max_n)
+    x0 = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
+    v0 = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
 
     state.n[None] = 0
     state.mass.fill(1)
@@ -95,15 +97,26 @@ if __name__ == '__main__':
             if dist < connection_radius:
                 springs.add([u, v], 0.1, spring_Y)
     
-    new_particle(.3, .3)
-    new_particle(.3, .4)
-    new_particle(.4, .4)
+    for i in range(0, 5):
+        for j in range(3, 5):
+            new_particle(i * .2, j * .2)
+            new_particle(i * .2 + .05, j * .2)
+            new_particle(i * .2, j * .2 + .05)
+
 
     # gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
     window = ti.ui.Window("Taichi MLS-MPM-128", res=(512, 512), vsync=True)
     canvas = window.get_canvas()
     canvas.set_background_color((.9,)*3)
     pause = False
+    newton.canvas = canvas
+    x_wall = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
+    x_wall[0] = [1, 0]
+    x_wall[1] = [1, 1]
+    x_wall[2] = [0, 1]
+    i_wall = ti.Vector.field(2, dtype=ti.i32, shape=max_n)
+    i_wall[0] = [0, 1]
+    i_wall[1] = [2, 1]
 
     while window.running:
         # for i in range(springs.m[None]):
@@ -114,11 +127,18 @@ if __name__ == '__main__':
         # for i in range(state.n[None]):
         #     c = 0x111111
         #     gui.circle(pos=state.x[i], color=c, radius=5)
+        if not pause:
+            substep_implicit()
+        if window.is_pressed('e'):
+            toy.cg.ax_by(x0, 1, state.x, 0, state.x)
+            toy.cg.ax_by(v0, 1, state.v, 0, state.v)
+            substep_implicit()
+            toy.cg.ax_by(state.x, 1, x0, 0, state.x)
+            toy.cg.ax_by(state.v, 1, v0, 0, state.v)
         if not window.is_pressed("v"):
             canvas.circles(centers=state.x, radius=.01, color=(.6,)*3)
             canvas.lines(state.x, width=.004, indices=springs.vert)
-        if not pause:
-            substep_implicit()
+        canvas.lines(x_wall, width=.01, indices = i_wall)
         window.show()
         mouse = window.get_cursor_pos()
         for e in window.get_events(ti.ui.PRESS):
@@ -130,6 +150,31 @@ if __name__ == '__main__':
                 substep_implicit()
             elif e.key == ' ':
                 pause = not pause
+            # elif e.key == 'r':
+            #     forces.models.remove(collision)
+            # elif e.key == 'c':
+            #     if collision not in forces.models: forces.models.append(collision)
+        # shift = .003
+        shift = (walls.b[3] - state.x.to_numpy()[:, 0].max()) / 2
+        if window.is_pressed(ti.ui.LEFT):
+            walls.b[3] -= shift
+            x_wall[0].x -= shift
+            x_wall[1].x -= shift
+        if window.is_pressed(ti.ui.RIGHT):
+            shift = max(shift, .005)
+            walls.b[3] += shift
+            x_wall[0].x += shift
+            x_wall[1].x += shift
+        shift = (walls.b[1] - state.x.to_numpy()[:, 1].max()) / 2
+        if window.is_pressed(ti.ui.DOWN):
+            walls.b[1] -= shift
+            x_wall[1].y -= shift
+            x_wall[2].y -= shift
+        if window.is_pressed(ti.ui.UP):
+            shift = max(shift, .005)
+            walls.b[1] += shift
+            x_wall[1].y += shift
+            x_wall[2].y += shift
         if window.is_pressed(ti.ui.RMB):
             attraction.activate(mouse)
         else:

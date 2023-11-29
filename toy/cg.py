@@ -71,7 +71,7 @@ class newton:
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
-        n_iter = 10
+        n_iter = 20
         for iter in range(n_iter):
             f(b, pos)
             # print(f'iter = {iter}, b = {b.to_numpy()[:5]}')
@@ -87,6 +87,7 @@ class newton:
                 alpha = collision.ccd(pos, dx)
             else:
                 alpha = 1.0
+            # print(alpha)
             if alpha < 1.0: alpha *= 0.9
             def ene():
                 ax_by(x_1, 1, pos, alpha, dx)
@@ -98,8 +99,9 @@ class newton:
                 alpha /= 2
             d_e = ene() - e_0
             ax_by(pos, 1, pos, alpha, dx)
+            self.canvas.circles(centers=pos, radius=.01, color=(.6, 0, 0))
             mi = pos.to_numpy()[:3, 1].min()
-            print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
+            # print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
             # if mi <= 1e-3: exit(0)
         return pos
     
@@ -117,7 +119,7 @@ class newton:
         p.copy_from(r)
         r_2 = dot(r, r)
         r_0 = r_2
-        n_iter = 10
+        n_iter = 20
         eps = 1e-10
         if r_0 < 1e-20: return
         for iter in range(n_iter):
