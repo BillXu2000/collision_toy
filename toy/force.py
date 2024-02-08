@@ -411,3 +411,62 @@ class Attraction:
     def df(self, f, x, dx, n):
         if self.active:
             self.force_k(f, x, n)
+
+# TODO: haven't been tested
+@ti.data_oriented
+class neohookean:
+    def __init__(self, max_m = 1000):
+        self.m = ti.field(dtype=ti.i32, shape=())
+        self.m[None] = 0
+        self.max_m = max_m
+        m = self.max_m
+        self.vert = ti.Vector.field(2, dtype=ti.i32, shape=m)
+        self.length = ti.field(dtype=ti.f32, shape=m)
+        self.k = ti.field(dtype=ti.f32, shape=m)
+        self.enable = ti.field(dtype=ti.i32, shape=m)
+        self.enable.fill(1)
+    
+    def add(self, vert, length, k):
+        m = self.m[None]
+        self.vert[m] = vert
+        self.length[m] = length
+        self.k[m] = k
+        self.m[None] = m + 1
+        return m
+
+    def enable(self, i, flag):
+        self.enable[i] = flag
+    
+    @ti.kernel
+    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
+        ans = 0.
+        for i in range(self.m[None]):
+            if not self.enable[i]: continue
+            v = self.vert[i]
+            xuv = x[v.x] - x[v.y]
+            ans += .5 * self.k[i] * (xuv.norm() - self.length[i])**2
+        return ans
+
+    @ti.kernel
+    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
+        for i in range(self.m[None]):
+            if not self.enable[i]: continue
+            v = self.vert[i]
+            xuv = x[v.x] - x[v.y]
+            f_tmp = -self.k[i] * (xuv.norm() - self.length[i]) * xuv.normalized()
+            f[v.x] += f_tmp
+            f[v.y] -= f_tmp
+
+    @ti.kernel
+    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
+        for i in range(self.m[None]):
+            if not self.enable[i]: continue
+            v = self.vert[i]
+            xuv = x[v.x] - x[v.y]
+            d = xuv.normalized()
+            df = -self.k[i] * (d.outer_product(d))
+            if xuv.norm() > self.length[i]:
+                df += -self.k[i] * (xuv.norm() - self.length[i]) / xuv.norm() * (ti.Matrix.identity(ti.f32, 2) - d.outer_product(d))
+            tmp_df = df @ (dx[v.x] - dx[v.y])
+            f[v.x] += tmp_df
+            f[v.y] -= tmp_df
