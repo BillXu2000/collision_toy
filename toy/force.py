@@ -28,7 +28,10 @@ class Implicit:
     @ti.kernel
     def gradient_k(self, f: ti.template(), x: ti.template(), n: ti.i32, dt: ti.f32):
         for i in range(n):
-            f[i] = (x[i] - self.target[i]) * self.mass[i] - dt**2 * f[i]
+            if self.mass[i] == -1:
+                f[i] = x[i] - self.target[i]
+            else:
+                f[i] = (x[i] - self.target[i]) * self.mass[i] - dt**2 * f[i]
 
     def gradient(self, f, x):
         self.forces.force(f, x, self.n)
@@ -37,7 +40,10 @@ class Implicit:
     @ti.kernel
     def hessian_k(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32, dt: ti.f32):
         for i in range(n):
-            f[i] = self.mass[i] * dx[i] - dt**2 * f[i]
+            if self.mass[i] == -1:
+                f[i] = dx[i]
+            else:
+                f[i] = self.mass[i] * dx[i] - dt**2 * f[i]
     
     def hessian(self, f, x, dx):
         self.forces.df(f, x, dx, self.n)
@@ -288,6 +294,16 @@ class Walls:
                 if 0 < d < self.d_m:
                     ddf = df_barrier(d, d_m) * self.k
                     f[i] += ddf * self.a[j] * self.a[j].dot(dx[i])
+    
+    # @ti.kernel
+    # def setx0(self, x: ti.template(), n: ti.i32):
+    #     d_m = ti.static(self.d_m)
+    #     for i in range(n):
+    #         for j in range(self.n[None]):
+    #             d = self.b[j] - self.a[j].dot(x[i])
+    #             if d < self.d_m:
+    #                 k = (1 / (-d / self.d_m + 2)) * self.d_m
+    #                 x[i] += (d - k) * self.a[j]
 
 @ti.data_oriented
 class Gravity:
