@@ -18,7 +18,9 @@ class Implicit:
     def energy_k(self, x: ti.template(), n: ti.i32) -> ti.f32:
         energy = 0.
         for i in range(n):
-            energy += .5 * (x[i] - self.target[i]).norm_sqr() * self.mass[i]
+            m = self.mass[i]
+            if m == -1: m = 1e5
+            energy += .5 * (x[i] - self.target[i]).norm_sqr() * m
         return energy
 
     def energy(self, x):
