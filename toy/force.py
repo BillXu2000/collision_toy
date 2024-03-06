@@ -1,6 +1,8 @@
 import taichi as ti
-import numpy as np
-from . import cg
+import numpy as np, json
+from . import cg, export
+
+mass_hack = 1e4
 
 @ti.data_oriented
 class Implicit:
@@ -10,6 +12,7 @@ class Implicit:
     
     def set_target(self, x, v, mass, dt, n):
         cg.ax_by(self.target, 1, x, dt, v)
+        export.exporter.export({'target': self.target.to_numpy(), 'type': 'target'})
         self.mass = mass
         self.dt = dt
         self.n = n
@@ -19,19 +22,21 @@ class Implicit:
         energy = 0.
         for i in range(n):
             m = self.mass[i]
-            if m == -1: m = 1e5
+            if m == -1: m = mass_hack
             energy += .5 * (x[i] - self.target[i]).norm_sqr() * m
         return energy
 
     def energy(self, x):
         ans = self.forces.energy(x, self.n)
-        return self.energy_k(x, self.n) + self.dt**2 * ans
+        ans_k = self.energy_k(x, self.n)
+        # print(ans, ans_k)
+        return ans_k + self.dt**2 * ans
     
     @ti.kernel
     def gradient_k(self, f: ti.template(), x: ti.template(), n: ti.i32, dt: ti.f32):
         for i in range(n):
             if self.mass[i] == -1:
-                f[i] = x[i] - self.target[i]
+                f[i] = (x[i] - self.target[i]) * mass_hack
             else:
                 f[i] = (x[i] - self.target[i]) * self.mass[i] - dt**2 * f[i]
 
@@ -43,7 +48,7 @@ class Implicit:
     def hessian_k(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32, dt: ti.f32):
         for i in range(n):
             if self.mass[i] == -1:
-                f[i] = dx[i]
+                f[i] = dx[i] * mass_hack
             else:
                 f[i] = self.mass[i] * dx[i] - dt**2 * f[i]
     
@@ -179,8 +184,9 @@ class Collision:
             for j in range(self.springs.m[None]):
                 v = ti.Vector([-1, -1, -1], dt=ti.i32)
                 d = 0.
-                if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 0: continue
-                ans += barrier(d, dm) * self.k
+                if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 1:
+                    # print(i, j, verts[j], d, dm, barrier(d, dm))
+                    ans += barrier(d, dm) * self.k
         for i in range(self.n[None]):
             for j in range(i):
                 xij = x[i] - x[j]
@@ -247,65 +253,66 @@ class Collision:
                 f[i] += tmp
                 f[j] -= tmp
 
-@ti.data_oriented
-class Walls:
-    def __init__(self, a, b, k, d_m):
-        a = np.array(a)
-        n = a.shape[0]
-        self.n = ti.field(dtype=ti.i32, shape=())
-        self.a = ti.Vector.field(a.shape[1], dtype=ti.f32, shape=n)
-        self.b = ti.field(dtype=ti.f32, shape=n)
-        self.a.from_numpy(a)
-        self.b.from_numpy(np.array(b))
-        self.n[None] = n
-        self.k = k
-        self.d_m = d_m
+# legacy
+# @ti.data_oriented
+# class Walls:
+#     def __init__(self, a, b, k, d_m):
+#         a = np.array(a)
+#         n = a.shape[0]
+#         self.n = ti.field(dtype=ti.i32, shape=())
+#         self.a = ti.Vector.field(a.shape[1], dtype=ti.f32, shape=n)
+#         self.b = ti.field(dtype=ti.f32, shape=n)
+#         self.a.from_numpy(a)
+#         self.b.from_numpy(np.array(b))
+#         self.n[None] = n
+#         self.k = k
+#         self.d_m = d_m
 
-    @ti.kernel
-    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
-        ans = 0.
-        inf_flag = 0
-        for i in range(n):
-            for j in range(self.n[None]):
-                d = self.b[j] - self.a[j].dot(x[i])
-                if d <= 0: 
-                    inf_flag = 1
-                if 0 < d < self.d_m:
-                    ans += barrier(d, self.d_m) * self.k
-        if inf_flag: ans = float('inf')
-        return ans
+#     @ti.kernel
+#     def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
+#         ans = 0.
+#         inf_flag = 0
+#         for i in range(n):
+#             for j in range(self.n[None]):
+#                 d = self.b[j] - self.a[j].dot(x[i])
+#                 if d <= 0: 
+#                     inf_flag = 1
+#                 if 0 < d < self.d_m:
+#                     ans += barrier(d, self.d_m) * self.k
+#         if inf_flag: ans = float('inf')
+#         return ans
 
-    @ti.kernel
-    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
-        d_m = ti.static(self.d_m)
-        for i in range(n):
-            for j in range(self.n[None]):
-                d = self.b[j] - self.a[j].dot(x[i])
-                assert 0 < d
-                if 0 < d < self.d_m:
-                    dfdd = f_barrier(d, d_m) * self.k
-                    f[i] += dfdd * (-self.a[j]) # d(d)/dx
+#     @ti.kernel
+#     def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
+#         d_m = ti.static(self.d_m)
+#         for i in range(n):
+#             for j in range(self.n[None]):
+#                 d = self.b[j] - self.a[j].dot(x[i])
+#                 assert 0 < d
+#                 if 0 < d < self.d_m:
+#                     dfdd = f_barrier(d, d_m) * self.k
+#                     f[i] += dfdd * (-self.a[j]) # d(d)/dx
     
-    @ti.kernel
-    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
-        d_m = ti.static(self.d_m)
-        for i in range(n):
-            for j in range(self.n[None]):
-                d = self.b[j] - self.a[j].dot(x[i])
-                assert 0 < d
-                if 0 < d < self.d_m:
-                    ddf = df_barrier(d, d_m) * self.k
-                    f[i] += ddf * self.a[j] * self.a[j].dot(dx[i])
+#     @ti.kernel
+#     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
+#         d_m = ti.static(self.d_m)
+#         for i in range(n):
+#             for j in range(self.n[None]):
+#                 d = self.b[j] - self.a[j].dot(x[i])
+#                 assert 0 < d
+#                 if 0 < d < self.d_m:
+#                     ddf = df_barrier(d, d_m) * self.k
+#                     f[i] += ddf * self.a[j] * self.a[j].dot(dx[i])
     
-    # @ti.kernel
-    # def setx0(self, x: ti.template(), n: ti.i32):
-    #     d_m = ti.static(self.d_m)
-    #     for i in range(n):
-    #         for j in range(self.n[None]):
-    #             d = self.b[j] - self.a[j].dot(x[i])
-    #             if d < self.d_m:
-    #                 k = (1 / (-d / self.d_m + 2)) * self.d_m
-    #                 x[i] += (d - k) * self.a[j]
+#     # @ti.kernel
+#     # def setx0(self, x: ti.template(), n: ti.i32):
+#     #     d_m = ti.static(self.d_m)
+#     #     for i in range(n):
+#     #         for j in range(self.n[None]):
+#     #             d = self.b[j] - self.a[j].dot(x[i])
+#     #             if d < self.d_m:
+#     #                 k = (1 / (-d / self.d_m + 2)) * self.d_m
+#     #                 x[i] += (d - k) * self.a[j]
 
 @ti.data_oriented
 class Gravity:

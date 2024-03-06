@@ -1,4 +1,6 @@
 import taichi as ti
+import json
+from . import export
 
 @ti.kernel
 def ax_by(z: ti.template(), a: ti.f32, x: ti.template(), b: ti.f32, y: ti.template()):
@@ -66,6 +68,7 @@ class newton:
         self.dx = gen_field()
         self.A_p = gen_field()
         self.pos = gen_field()
+        self.export = True
     
     def newton(self, energy, f, df, x0, collision = None):
         pos = self.pos
@@ -74,6 +77,7 @@ class newton:
         n_iter = 5
         for iter in range(n_iter):
             f(b, pos)
+            force = b.to_numpy()
             # print(f'iter = {iter}, b = {b.to_numpy()[:5]}')
             ax_by(b, -1, b, 0, b)
             def A(ans, dx):
@@ -89,19 +93,24 @@ class newton:
                 alpha = 1.0
             # print(alpha)
             if alpha < 1.0: alpha *= 0.9
+            # print(alpha)
             def ene():
                 ax_by(x_1, 1, pos, alpha, dx)
                 ans = energy(x_1)
                 # print(f'alpha = {alpha}, ans = {ans}, e_0 = {e_0}')
-                # if alpha < 1e-9: exit(0)
+                if alpha < 1e-9: exit(0)
                 return ans
             while not ene() <= e_0:
                 alpha /= 2
+                # print(alpha)
             d_e = ene() - e_0
+            if self.export:
+                ans = {'type': 'newton', 'pos': pos.to_numpy(), 'dx': dx.to_numpy(), 'force': force, 'i_n': iter, 'e_0': e_0, 'd_e': d_e, 'alpha': alpha, 'n': newton.n[None]}
+                export.exporter.export(ans)
             ax_by(pos, 1, pos, alpha, dx)
             # self.canvas.circles(centers=pos, radius=.01, color=(.6, 0, 0))
             mi = pos.to_numpy()[:3, 1].min()
-            print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
+            # print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
             # if mi <= 1e-3: exit(0)
         return pos
     

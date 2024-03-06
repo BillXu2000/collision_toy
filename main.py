@@ -1,13 +1,6 @@
 import toy
-import taichi as ti
-
-class State:
-    def write(self, new):
-        self.x.from_numpy(new['x'])
-        self.v.from_numpy(new['v'])
-    def read(self):
-        ans = {'x': self.x.to_numpy(), 'v': self.v.to_numpy()}
-        return ans
+import taichi as ti, json, numpy as np, os, uuid, subprocess
+from toy import State
 
 if __name__ == '__main__':
 
@@ -31,11 +24,12 @@ if __name__ == '__main__':
     spring_Y = 10000
     springs = toy.force.Springs()
     attraction = toy.force.Attraction(spring_Y * .01)
-    walls = toy.force.Walls([[0, -1], [0, 1], [-1, 0], [1, 0]], [0, 1, 0, 1], k=spring_Y, d_m=1e-2)
-    collision = toy.force.Collision(state.n, springs, k=spring_Y, d_m=1e-2)
+    # walls = toy.force.Walls([[0, -1], [0, 1], [-1, 0], [1, 0]], [0, 1, 0, 1], k=spring_Y, d_m=1e-2)
+    collision = toy.force.Collision(state.n, springs, k=spring_Y * 1e0, d_m=1e-2)
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls, collision])
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls])
     forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, collision])
+    # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction])
     implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
     dt = 1e-2
 
@@ -51,8 +45,8 @@ if __name__ == '__main__':
         state.n[None] = n + m
 
 
-    add_polygon([[0, 0], [1, 0], [1, 1], [0, 1]])
-    add_polygon([[1, -100], [1, 100]])
+    add_polygon([[0.05, 0.05], [1 - 0.05, 0.05], [1 - 0.05, 1 - 0.05], [0.05, 1 - 0.05]])
+    # add_polygon([[1, -100], [1, 100]])
     # add_polygon([[0, 0], [0, 1]])
 
     @ti.kernel
@@ -91,7 +85,8 @@ if __name__ == '__main__':
         x = ti.static(state.x)
         v = ti.static(state.v)
         for i in range(n):
-            v[i] = (x_1[i] - x[i]) / dt
+            if state.mass[i] != -1:
+                v[i] = (x_1[i] - x[i]) / dt
             x[i] = x_1[i]
             # for d in ti.static(range(2)):
             #     if x[i][d] < 0:  # Bottom and left
@@ -103,7 +98,6 @@ if __name__ == '__main__':
             #         v[i][d] = 0  # stop it from moving further
     
     newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
-    hack = False
 
     def substep_implicit():
         toy.cg.newton.n = state.n
@@ -123,30 +117,36 @@ if __name__ == '__main__':
             if dist < connection_radius:
                 springs.add([u, v], 0.1, spring_Y)
     
+    # for i in range(1, 2):
+    #     for j in range(3, 4):
     for i in range(1, 5):
         for j in range(3, 5):
             new_particle(i * .2, j * .2)
             new_particle(i * .2 + .05, j * .2)
             new_particle(i * .2, j * .2 + .05)
+    # new_particle(.2, .2)
 
 
     # gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
-    window = ti.ui.Window("Taichi MLS-MPM-128", res=(512, 512), vsync=True)
+    window = ti.ui.Window("Taichi MLS-MPM-128", res=(800, 800), vsync=True)
     canvas = window.get_canvas()
     canvas.set_background_color((.9,)*3)
     pause = False
     newton.canvas = canvas
-    x_wall = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    x_wall[0] = [1, 0]
-    x_wall[1] = [1, 1]
-    x_wall[2] = [0, 1]
-    i_wall = ti.Vector.field(2, dtype=ti.i32, shape=max_n)
-    i_wall[0] = [0, 1]
-    i_wall[1] = [2, 1]
+    # x_wall = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
+    # x_wall[0] = [1, 0]
+    # x_wall[1] = [1, 1]
+    # x_wall[2] = [0, 1]
+    # i_wall = ti.Vector.field(2, dtype=ti.i32, shape=max_n)
+    # i_wall[0] = [0, 1]
+    # i_wall[1] = [2, 1]
 
     frames = {}
-    i_frame = 1
-    frames[0] = state.read()
+    frames[0] = state.dumps()
+    i_frame = 0
+    exporter = toy.export.exporter
+
+    exporter.export({'springs': springs.vert.to_numpy(), 'type': 'springs'})
 
 
     while window.running:
@@ -159,22 +159,25 @@ if __name__ == '__main__':
         #     c = 0x111111
         #     gui.circle(pos=state.x[i], color=c, radius=5)
         if not pause:
+            exporter.set_i_f(i_frame)
+            exporter.export(frames[i_frame])
             substep_implicit()
-            frames[i_frame] = state.read()
             i_frame += 1
-        if window.is_pressed('e'):
-            toy.cg.ax_by(x0, 1, state.x, 0, state.x)
-            toy.cg.ax_by(v0, 1, state.v, 0, state.v)
-            substep_implicit()
-            toy.cg.ax_by(state.x, 1, x0, 0, state.x)
-            toy.cg.ax_by(state.v, 1, v0, 0, state.v)
+            frames[i_frame] = state.dumps()
+        # if window.is_pressed('e'):
+        #     toy.cg.ax_by(x0, 1, state.x, 0, state.x)
+        #     toy.cg.ax_by(v0, 1, state.v, 0, state.v)
+        #     substep_implicit()
+        #     toy.cg.ax_by(state.x, 1, x0, 0, state.x)
+        #     toy.cg.ax_by(state.v, 1, v0, 0, state.v)
         if not window.is_pressed("v"):
             canvas.circles(centers=state.x, radius=.01, color=(.6,)*3)
             canvas.lines(state.x, width=.004, indices=springs.vert)
-        canvas.lines(x_wall, width=.01, indices = i_wall)
+        # canvas.lines(x_wall, width=.01, indices = i_wall)
         window.show()
         mouse = window.get_cursor_pos()
         for e in window.get_events(ti.ui.PRESS):
+            shift = .5
             if e.key in [ti.ui.ESCAPE]:
                 window.running = False
             elif e.key == ti.ui.LMB:
@@ -183,25 +186,46 @@ if __name__ == '__main__':
                 substep_implicit()
             elif e.key == ' ':
                 pause = not pause
-            elif e.key == 'b' and i_frame > 1:
-                i_frame -= 1
-                state.write(frames[i_frame - 1])
-            elif e.key == 'h':
-                hack = not hack
+            # elif e.key == 'b' and i_frame > 1:
+            #     i_frame -= 1
+            #     state.loads(frames[i_frame - 1])
+            # elif e.key == 's':
+            #     # fn = f'./output/{uuid.uuid4().hex}.json'
+            #     fn = f'./output/tmp.json'
+            #     data = json.dumps(frames[i_frame - 1])
+            #     with open(fn, 'w') as fi:
+            #         fi.write(data)
+            # elif e.key == 'l':
+            #     fn = f'./output/tmp.json'
+            #     with open(fn, 'r') as fi:
+            #         lines = fi.readlines()
+            #     j = json.loads('\n'.join(lines))
+            #     state.loads(j)
+            elif e.key == 'e':
+                state.v[1].x -= shift * 10
+                state.v[2].x -= shift * 10
+            elif e.key == ti.ui.LEFT:
+                state.v[1].x -= shift
+                state.v[2].x -= shift
+            elif e.key == ti.ui.RIGHT:
+                state.v[1].x += shift
+                state.v[2].x += shift
+            elif e.key == 'i':
+                subprocess.Popen(['python3', './view.py'])
             # elif e.key == 'r':
             #     forces.models.remove(collision)
             # elif e.key == 'c':
             #     if collision not in forces.models: forces.models.append(collision)
-        shift = .5
         # shift = (walls.b[3] - state.x.to_numpy()[:, 0].max()) / 2
-        state.v[1] = [0, 0]
-        state.v[2] = [0, 0]
-        if window.is_pressed(ti.ui.LEFT):
-            state.v[4].x = -shift
-            state.v[5].x = -shift
-        if window.is_pressed(ti.ui.RIGHT):
-            state.v[4].x = shift
-            state.v[5].x = shift
+        # state.v[1] = [0, 0]
+        # state.v[2] = [0, 0]
+        # if window.is_pressed('e'):
+        #     state.v[1].x -= shift * 10
+        #     state.v[2].x -= shift * 10
+        # if window.is_pressed(ti.ui.LEFT):
+        # if window.is_pressed(ti.ui.RIGHT):
+        #     state.v[1].x += shift
+        #     state.v[2].x += shift
         
         # if window.is_pressed(ti.ui.LEFT):
             # walls.b[3] -= shift
@@ -212,17 +236,17 @@ if __name__ == '__main__':
         #     walls.b[3] += shift
         #     x_wall[0].x += shift
         #     x_wall[1].x += shift
-        shift = .003
+        # shift = .003
         # shift = (walls.b[1] - state.x.to_numpy()[:, 1].max()) / 2
-        if window.is_pressed(ti.ui.DOWN):
-            walls.b[1] -= shift
-            x_wall[1].y -= shift
-            x_wall[2].y -= shift
-        if window.is_pressed(ti.ui.UP):
-            shift = max(shift, .005)
-            walls.b[1] += shift
-            x_wall[1].y += shift
-            x_wall[2].y += shift
+        # if window.is_pressed(ti.ui.DOWN):
+        #     walls.b[1] -= shift
+        #     x_wall[1].y -= shift
+        #     x_wall[2].y -= shift
+        # if window.is_pressed(ti.ui.UP):
+        #     shift = max(shift, .005)
+        #     walls.b[1] += shift
+        #     x_wall[1].y += shift
+        #     x_wall[2].y += shift
         if window.is_pressed(ti.ui.RMB):
             attraction.activate(mouse)
         else:
