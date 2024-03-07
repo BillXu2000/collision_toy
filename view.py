@@ -36,51 +36,97 @@ if __name__ == '__main__':
     gui = window.get_gui()
     canvas.set_background_color((.9,)*3)
     pause = False
-    data = {}
-    def load(i):
-        global data, cur
-        fn = f'{i - 1}.log'
-        if not path.exists(fn):
-            cur -= 1
-            return
+    ls = os.listdir('./log')
+    ls = ['./log/' + i for i in sorted(ls, reverse=True) if i.endswith('.log')]
+    frames = []
+    targets = []
+    newtons = []
+    n_frame = 0
+    def read_file(fn):
+        global n_frame
         with open(fn, 'r') as fi:
-            data = json.load(fi)
-        pos.from_numpy(np.array(data['pos']))
-        dx.from_numpy(np.array(data['dx']))
+            lines = fi.readlines()
+        for line in lines:
+            if line == '': continue
+            data = json.loads(line)
+            i_f = data['i_f']
+            if 'type' not in data:
+                assert len(frames) == i_f
+                frames.append(data)
+            elif data['type'] == 'springs':
+                vert.from_numpy(toy.export.b642np(data['springs']))
+            elif data['type'] == 'target':
+                assert len(targets) == i_f
+                targets.append(data)
+            elif data['type'] == 'newton':
+                if len(newtons) == i_f:
+                    newtons.append([])
+                assert len(newtons[i_f]) == data['i_n']
+                n_frame = max(n_frame, i_f)
+                newtons[i_f].append(data)
+    read_file(ls[0])
+    set_link(max_n, pos_linknext, pos, pos_n, vert_linknext)
+
+
+    # def load(i):
+    #     global data, cur
+    #     fn = f'{i - 1}.log'
+    #     if not path.exists(fn):
+    #         cur -= 1
+    #         return
+    #     with open(fn, 'r') as fi:
+    #         data = json.load(fi)
+    #     pos.from_numpy(np.array(data['pos']))
+    #     dx.from_numpy(np.array(data['dx']))
+    #     ax_by(pos_n, 1, pos, 1, dx)
+    #     set_link(data['n'], pos_linknext, pos, pos_n, vert_linknext)
+
+    # with open('spring.log', 'r') as fi:
+    #     vert_data = json.load(fi)
+    #     vert.from_numpy(np.array(vert_data))
+    # with open('target.log', 'r') as fi:
+    #     target_data = json.load(fi)
+    #     target.from_numpy(np.array(target_data))
+
+
+    def load(i_f, i_n):
+        pos.from_numpy(toy.export.b642np(newtons[i_f][i_n]['pos']))
+        dx.from_numpy(toy.export.b642np(newtons[i_f][i_n]['dx']))
         ax_by(pos_n, 1, pos, 1, dx)
-        set_link(data['n'], pos_linknext, pos, pos_n, vert_linknext)
-
-    with open('spring.log', 'r') as fi:
-        vert_data = json.load(fi)
-        vert.from_numpy(np.array(vert_data))
-    with open('target.log', 'r') as fi:
-        target_data = json.load(fi)
-        target.from_numpy(np.array(target_data))
-
-
-    load(1)
-    cur = 1
+        target.from_numpy(toy.export.b642np(targets[i_f]['target']))
+    def next_frame():
+        global i_f
+        i_f += 1
+        if i_f >= len(frames):
+            i_f = len(frames) - 1
+    i_f = 0
+    i_n = 0
     while window.running:
+        i_f = min(i_f, n_frame)
+        i_f = gui.slider_int('i_f', i_f, 0, n_frame)
+        i_n = gui.slider_int('i_n', i_n, 0, len(newtons[i_f]) - 1)
+        load(i_f, i_n)
+        # load(i_f)
         canvas.circles(centers=pos, radius=.01, color=(.6,)*3)
         canvas.circles(centers=target, radius=.01, color=(.6, 0, 0))
         canvas.circles(centers=pos_n, radius=.01, color=(0, .6, 0))
         canvas.lines(pos, width=.004, indices=vert)
         canvas.lines(pos_linknext, width=.004, indices=vert_linknext, color=(0, .6, 0))
         # canvas.lines(x_wall, width=.01, indices = i_wall)
-        p = pos.to_numpy()
-        i = p[4:, 0].argmax() + 4
-        gui.text(f'{p[1, 0]} {i} {p[i]}')
-        tmp[0] = p[i]
-        canvas.circles(centers=tmp, radius=.01, color=(0, 0, .6))
+        # p = pos.to_numpy()
+        # i = p[4:, 0].argmax() + 4
+        # gui.text(f'{p[1, 0]} {i} {p[i]}')
+        # tmp[0] = p[i]
+        # canvas.circles(centers=tmp, radius=.01, color=(0, 0, .6))
         window.show()
         mouse = window.get_cursor_pos()
+        if window.is_pressed(' '):
+            next_frame()
         for e in window.get_events(ti.ui.PRESS):
             if e.key in [ti.ui.ESCAPE]:
                 window.running = False
             if e.key == 'n':
-                cur += 1
-                load(cur)
+                next_frame()
             if e.key == 'p':
-                cur = max(1, cur - 1)
-                load(cur)
+                i_f = max(1, i_f - 1)
 

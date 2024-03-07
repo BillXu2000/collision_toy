@@ -17,5 +17,5 @@ class State:
         for i in self.names:
             k = getattr(self, i, None)
             if k is not None:
-                ans[i] = k.to_numpy()
+                ans[i] = k.to_numpy() if i != 'n' else k[None]
         return ans
