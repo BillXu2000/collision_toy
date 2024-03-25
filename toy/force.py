@@ -438,24 +438,43 @@ class Attraction:
             self.force_k(f, x, n)
 
 # TODO: haven't been tested
+
+@ti.func
+def ssvd(F):
+    U, sig, V = ti.svd(F)
+    if U.determinant() < 0:
+        for i in ti.static(range(3)):
+            U[i, 2] *= -1
+        sig[2, 2] = -sig[2, 2]
+    if V.determinant() < 0:
+        for i in ti.static(range(3)):
+            V[i, 2] *= -1
+        sig[2, 2] = -sig[2, 2]
+    return U, sig, V
+
+@ti.func
+def Ds(verts, x):
+    return ti.Matrix.cols([x[verts[i]] - x[verts[2]] for i in range(2)])
+    
+
 @ti.data_oriented
-class neohookean:
-    def __init__(self, max_m = 1000):
+class Elasticity:
+    def __init__(self, max_m = 1000, k = 1e3, nu = 0.0):
         self.m = ti.field(dtype=ti.i32, shape=())
         self.m[None] = 0
         self.max_m = max_m
-        m = self.max_m
-        self.vert = ti.Vector.field(2, dtype=ti.i32, shape=m)
-        self.length = ti.field(dtype=ti.f32, shape=m)
-        self.k = ti.field(dtype=ti.f32, shape=m)
-        self.enable = ti.field(dtype=ti.i32, shape=m)
+        self.k = k
+        self.mu = k / (2 * (1 + nu))
+        self.la = k * nu / ((1 + nu) * (1 - 2 * nu))
+        self.vert = ti.Vector.field(3, dtype=ti.i32, shape=max_m)
+        self.F_B = ti.Matrix.field(2, 2, dtype=ti.f32, shape=max_m)
+        self.F_W = ti.field(dtype=ti.f32, shape=max_m)
+        self.enable = ti.field(dtype=ti.i32, shape=max_m)
         self.enable.fill(1)
     
-    def add(self, vert, length, k):
+    def add(self, vert):
         m = self.m[None]
         self.vert[m] = vert
-        self.length[m] = length
-        self.k[m] = k
         self.m[None] = m + 1
         return m
 
@@ -463,35 +482,58 @@ class neohookean:
         self.enable[i] = flag
     
     @ti.kernel
+    def init(self, x: ti.template()):
+        for i in range(self.m[None]):
+            if not self.enable[i]: continue
+            verts = self.vert[i]
+            F = Ds(verts, x)
+            self.F_B[i] = F.inverse()
+            self.F_W[i] = ti.abs(F.determinant()) / 2
+    
+    @ti.kernel
     def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
         ans = 0.
         for i in range(self.m[None]):
             if not self.enable[i]: continue
-            v = self.vert[i]
-            xuv = x[v.x] - x[v.y]
-            ans += .5 * self.k[i] * (xuv.norm() - self.length[i])**2
+            verts = self.vert[i]
+            F = Ds(verts, x) @ self.F_B[i]
+            I1 = (F.transpose() @ F).trace()
+            J = F.determinant()
+            ans += self.F_W[i] * (self.mu * (.5 * I1 - 1 - ti.log(J)) + self.la * .5 * ti.log(J)**2) # neohookean
+            # F_I = (F - ti.Matrix.identity(ti.f32, 2))
+            # ans += self.F_W[i] * self.mu * (F_I @ F_I.transpose()).trace() * .5
         return ans
 
     @ti.kernel
     def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
         for i in range(self.m[None]):
             if not self.enable[i]: continue
-            v = self.vert[i]
-            xuv = x[v.x] - x[v.y]
-            f_tmp = -self.k[i] * (xuv.norm() - self.length[i]) * xuv.normalized()
-            f[v.x] += f_tmp
-            f[v.y] -= f_tmp
+            verts = self.vert[i]
+            F = Ds(verts, x) @ self.F_B[i]
+            U, sig, V = ssvd(F)
+            R = U @ V.transpose()
+            J = F.determinant()
+            P = self.mu * (F - F.inverse().transpose()) + self.la * ti.log(J) * F.inverse().transpose()
+            # F_I = (F - ti.Matrix.identity(ti.f32, 2))
+            # P = self.mu * F_I
+            H = -self.F_W[i] * P @ self.F_B[i].transpose()
+            for i in ti.static(range(2)):
+                f[verts[i]] += H[:, i]
+                f[verts[2]] -= H[:, i]
 
     @ti.kernel
     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
         for i in range(self.m[None]):
             if not self.enable[i]: continue
-            v = self.vert[i]
-            xuv = x[v.x] - x[v.y]
-            d = xuv.normalized()
-            df = -self.k[i] * (d.outer_product(d))
-            if xuv.norm() > self.length[i]:
-                df += -self.k[i] * (xuv.norm() - self.length[i]) / xuv.norm() * (ti.Matrix.identity(ti.f32, 2) - d.outer_product(d))
-            tmp_df = df @ (dx[v.x] - dx[v.y])
-            f[v.x] += tmp_df
-            f[v.y] -= tmp_df
+            verts = self.vert[i]
+            F = Ds(verts, x) @ self.F_B[i]
+            dD = ti.Matrix.cols([dx[verts[j]] - dx[verts[2]] for j in ti.static(range(2))])
+            dF = dD @ self.F_B[i]
+            Fmt = F.transpose().inverse()
+            J = F.determinant()
+            dP = self.mu * dF + (self.mu - self.la * ti.log(J)) * Fmt @ dF.transpose() @ Fmt + self.la * (F.inverse() @ dF).trace() * Fmt
+            # dP = self.mu * dF
+            dH = -self.F_W[i] * dP @ self.F_B[i].transpose()
+            for i in ti.static(range(2)):
+                f[verts[i]] += dH[:, i]
+                f[verts[2]] -= dH[:, i]

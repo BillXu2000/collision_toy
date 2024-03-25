@@ -26,10 +26,12 @@ if __name__ == '__main__':
     attraction = toy.force.Attraction(spring_Y * .01)
     # walls = toy.force.Walls([[0, -1], [0, 1], [-1, 0], [1, 0]], [0, 1, 0, 1], k=spring_Y, d_m=1e-2)
     collision = toy.force.Collision(state.n, springs, k=spring_Y * 1e0, d_m=1e-2)
+    elasiticity = toy.force.Elasticity(k=spring_Y)
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls, collision])
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls])
-    forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, collision])
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction])
+    # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, collision])
+    forces = toy.force.Forces([elasiticity, toy.force.Gravity(), attraction, collision])
     implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
     dt = 1e-2
 
@@ -111,20 +113,27 @@ if __name__ == '__main__':
         state.v[u] = [0, 0]
         state.n[None] = u + 1
 
-        for v in range(u):
-            dist = (state.x[u] - state.x[v]).norm()
-            connection_radius = 0.15
-            if dist < connection_radius:
-                springs.add([u, v], 0.1, spring_Y)
+        # for v in range(u):
+        #     dist = (state.x[u] - state.x[v]).norm()
+        #     connection_radius = 0.15
+        #     if dist < connection_radius:
+        #         # springs.add([u, v], 0.1, spring_Y)
+        #         springs.add([u, v], 0.1, 0)
+        return u
     
     # for i in range(1, 2):
     #     for j in range(3, 4):
     for i in range(1, 5):
         for j in range(3, 5):
             new_particle(i * .2, j * .2)
-            new_particle(i * .2 + .05, j * .2)
-            new_particle(i * .2, j * .2 + .05)
+            new_particle(i * .2 + .1, j * .2)
+            u = new_particle(i * .2, j * .2 + .1)
+            springs.add([u, u - 1], 0, 0)
+            springs.add([u, u - 2], 0, 0)
+            springs.add([u - 1, u - 2], 0, 0)
+            elasiticity.add([u - 2, u - 1, u])
     # new_particle(.2, .2)
+    elasiticity.init(state.x)
 
 
     # gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
@@ -210,6 +219,12 @@ if __name__ == '__main__':
             elif e.key == ti.ui.RIGHT:
                 state.v[1].x += shift
                 state.v[2].x += shift
+            elif e.key == ti.ui.DOWN:
+                state.v[2].y -= shift
+                state.v[3].y -= shift
+            elif e.key == ti.ui.UP:
+                state.v[2].y += shift
+                state.v[3].y += shift
             elif e.key == 'i':
                 subprocess.Popen(['python3', './view.py'])
             # elif e.key == 'r':
