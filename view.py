@@ -2,6 +2,7 @@ import toy
 import taichi as ti, json, numpy as np, os, uuid
 from toy import State
 from os import path
+import argparse
 
 @ti.kernel
 def ax_by(z: ti.template(), a: ti.f32, x: ti.template(), b: ti.f32, y: ti.template()):
@@ -17,19 +18,23 @@ def set_link(n: ti.i32, target: ti.template(), a: ti.template(), b: ti.template(
 
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--log', default='')
+    args = parser.parse_args()
+
     ti.init(arch=ti.cpu)
 
-    max_n = int(1e3)
+    n_max = int(1e3)
 
-    pos = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    dx = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    pos_n = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    target = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
+    pos = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
+    dx = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
+    pos_n = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
+    target = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
     vert = ti.Vector.field(2, dtype=ti.i32, shape=1000)
     tmp = ti.Vector.field(2, dtype=ti.f32, shape=1000)
     tmp.fill(-1)
     n_p = ti.field(ti.i32, shape=())
-    pos_linknext = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
+    pos_linknext = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
     vert_linknext = ti.Vector.field(2, dtype=ti.i32, shape=1000)
     window = ti.ui.Window("newton viewer", res=(800, 800), vsync=True)
     canvas = window.get_canvas()
@@ -64,8 +69,9 @@ if __name__ == '__main__':
                 assert len(newtons[i_f]) == data['i_n']
                 n_frame = max(n_frame, i_f)
                 newtons[i_f].append(data)
-    read_file(ls[0])
-    set_link(max_n, pos_linknext, pos, pos_n, vert_linknext)
+    fn = ls[0] if args.log == '' else args.log
+    read_file(fn)
+    set_link(n_max, pos_linknext, pos, pos_n, vert_linknext)
 
 
     # def load(i):
@@ -125,8 +131,8 @@ if __name__ == '__main__':
         for e in window.get_events(ti.ui.PRESS):
             if e.key in [ti.ui.ESCAPE]:
                 window.running = False
-            if e.key == 'n':
+            if e.key in ['n', ti.ui.RIGHT]:
                 next_frame()
-            if e.key == 'p':
+            if e.key in ['p', ti.ui.LEFT]:
                 i_f = max(1, i_f - 1)
 

@@ -2,29 +2,6 @@ import taichi as ti
 import json
 from . import export
 
-@ti.kernel
-def ax_by(z: ti.template(), a: ti.f32, x: ti.template(), b: ti.f32, y: ti.template()):
-    for i in range(newton.n[None]):
-        z[i] = a * x[i] + b * y[i]
-
-@ti.kernel
-def ax_by_s(z: ti.template(), a: ti.f32, x: ti.template(), b: ti.f32, y: ti.template(), status: ti.template()):
-    for i in z:
-        if status[i] & constant.FIXED: continue
-        z[i] = a * x[i] + b * y[i]
-
-@ti.kernel
-def vec_mul(z: ti.template(), x: ti.template(), y: ti.template()):
-    for i in z:
-        z[i] = x[i] * y[i]
-
-@ti.kernel
-def dot(a: ti.template(), b: ti.template()) -> ti.f32:
-    ans = 0.0
-    for i in range(newton.n[None]):
-        ans += a[i].dot(b[i])
-    return ans
-
 # @ti.kernel
 # def clean_r(r: ti.template(), status: ti.template()):
 #     for i in r:
@@ -59,8 +36,10 @@ def dot(a: ti.template(), b: ti.template()) -> ti.f32:
 #         ax_by(b, -1, b, 0, b)
 #         cg()
 
+@ti.data_oriented
 class newton:
-    def __init__(self, gen_field):
+    def __init__(self, n, gen_field):
+        self.n = n
         self.gen_field = gen_field
         self.b = gen_field()
         self.r = gen_field()
@@ -70,7 +49,10 @@ class newton:
         self.pos = gen_field()
         self.export = True
     
-    def newton(self, energy, f, df, x0, collision = None):
+    def newton(self, energy, f, df, x0, ccd = None):
+        dot = self.dot
+        ax_by = self.ax_by
+
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
@@ -78,17 +60,15 @@ class newton:
         for iter in range(n_iter):
             f(b, pos)
             force = b.to_numpy()
-            # print(f'iter = {iter}, b = {b.to_numpy()[:5]}')
             ax_by(b, -1, b, 0, b)
             def A(ans, dx):
                 return df(ans, pos, dx)
             dx = self.cg(A, b)
             if dot(dx, dx) < 1e-10: break
             e_0 = energy(pos)
-            # print(f'iter = {iter}, dx = {dx.to_numpy()[:5]}, e0 = {e_0}')
             x_1 = b
-            if collision is not None:
-                alpha = collision.ccd(pos, dx)
+            if ccd is not None:
+                alpha = ccd(pos, dx)
             else:
                 alpha = 1.0
             # print(alpha)
@@ -105,7 +85,7 @@ class newton:
                 # print(alpha)
             d_e = ene() - e_0
             if self.export:
-                ans = {'type': 'newton', 'pos': pos.to_numpy(), 'dx': dx.to_numpy(), 'force': force, 'i_n': iter, 'e_0': e_0, 'd_e': d_e, 'alpha': alpha, 'n': newton.n[None]}
+                ans = {'type': 'newton', 'pos': pos.to_numpy(), 'dx': dx.to_numpy(), 'force': force, 'i_n': iter, 'e_0': e_0, 'd_e': d_e, 'alpha': alpha, 'n': self.n[None]}
                 export.exporter.export(ans)
             ax_by(pos, 1, pos, alpha, dx)
             # self.canvas.circles(centers=pos, radius=.01, color=(.6, 0, 0))
@@ -115,6 +95,9 @@ class newton:
         return pos
     
     def cg(self, A, b, x0=None):
+        dot = self.dot
+        ax_by = self.ax_by
+
         x = self.dx
         if x0 is not None:
             x.copy_from(x0)
@@ -150,3 +133,15 @@ class newton:
         err = dot(r, r)
         # if not err < 1e-7: print(iter, err, r_2)
         return x
+
+    @ti.kernel
+    def ax_by(self, z: ti.template(), a: ti.f32, x: ti.template(), b: ti.f32, y: ti.template()):
+        for i in range(self.n[None]):
+            z[i] = a * x[i] + b * y[i]
+
+    @ti.kernel
+    def dot(self, a: ti.template(), b: ti.template()) -> ti.f32:
+        ans = 0.0
+        for i in range(self.n[None]):
+            ans += a[i].dot(b[i])
+        return ans

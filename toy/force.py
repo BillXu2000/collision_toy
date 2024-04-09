@@ -2,82 +2,82 @@ import taichi as ti
 import numpy as np, json
 from . import cg, export
 
-mass_hack = 1e4
+# mass_hack = 1e4
 
-@ti.data_oriented
-class Implicit:
-    def __init__(self, forces, gen):
-        self.forces = forces
-        self.target = gen()
+# @ti.data_oriented
+# class Implicit:
+#     def __init__(self, forces, gen):
+#         self.forces = forces
+#         self.target = gen()
     
-    def set_target(self, x, v, mass, dt, n):
-        cg.ax_by(self.target, 1, x, dt, v)
-        export.exporter.export({'target': self.target.to_numpy(), 'type': 'target'})
-        self.mass = mass
-        self.dt = dt
-        self.n = n
+#     def set_target(self, x, v, mass, dt, n):
+#         cg.ax_by(self.target, 1, x, dt, v)
+#         export.exporter.export({'target': self.target.to_numpy(), 'type': 'target'})
+#         self.mass = mass
+#         self.dt = dt
+#         self.n = n
     
-    @ti.kernel
-    def energy_k(self, x: ti.template(), n: ti.i32) -> ti.f32:
-        energy = 0.
-        for i in range(n):
-            m = self.mass[i]
-            if m == -1: m = mass_hack
-            energy += .5 * (x[i] - self.target[i]).norm_sqr() * m
-        return energy
+#     @ti.kernel
+#     def energy_k(self, x: ti.template(), n: ti.i32) -> ti.f32:
+#         energy = 0.
+#         for i in range(n):
+#             m = self.mass[i]
+#             if m == -1: m = mass_hack
+#             energy += .5 * (x[i] - self.target[i]).norm_sqr() * m
+#         return energy
 
-    def energy(self, x):
-        ans = self.forces.energy(x, self.n)
-        ans_k = self.energy_k(x, self.n)
-        # print(ans, ans_k)
-        return ans_k + self.dt**2 * ans
+#     def energy(self, x):
+#         ans = self.forces.energy(x, self.n)
+#         ans_k = self.energy_k(x, self.n)
+#         # print(ans, ans_k)
+#         return ans_k + self.dt**2 * ans
     
-    @ti.kernel
-    def gradient_k(self, f: ti.template(), x: ti.template(), n: ti.i32, dt: ti.f32):
-        for i in range(n):
-            if self.mass[i] == -1:
-                f[i] = (x[i] - self.target[i]) * mass_hack
-            else:
-                f[i] = (x[i] - self.target[i]) * self.mass[i] - dt**2 * f[i]
+#     @ti.kernel
+#     def gradient_k(self, f: ti.template(), x: ti.template(), n: ti.i32, dt: ti.f32):
+#         for i in range(n):
+#             if self.mass[i] == -1:
+#                 f[i] = (x[i] - self.target[i]) * mass_hack
+#             else:
+#                 f[i] = (x[i] - self.target[i]) * self.mass[i] - dt**2 * f[i]
 
-    def gradient(self, f, x):
-        self.forces.force(f, x, self.n)
-        self.gradient_k(f, x, self.n, self.dt)
+#     def gradient(self, f, x):
+#         self.forces.force(f, x, self.n)
+#         self.gradient_k(f, x, self.n, self.dt)
     
-    @ti.kernel
-    def hessian_k(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32, dt: ti.f32):
-        for i in range(n):
-            if self.mass[i] == -1:
-                f[i] = dx[i] * mass_hack
-            else:
-                f[i] = self.mass[i] * dx[i] - dt**2 * f[i]
+#     @ti.kernel
+#     def hessian_k(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32, dt: ti.f32):
+#         for i in range(n):
+#             if self.mass[i] == -1:
+#                 f[i] = dx[i] * mass_hack
+#             else:
+#                 f[i] = self.mass[i] * dx[i] - dt**2 * f[i]
     
-    def hessian(self, f, x, dx):
-        self.forces.df(f, x, dx, self.n)
-        self.hessian_k(f, x, dx, self.n, self.dt)
+#     def hessian(self, f, x, dx):
+#         self.forces.df(f, x, dx, self.n)
+#         self.hessian_k(f, x, dx, self.n, self.dt)
 
-class Forces:
-    def __init__(self, models=[]):
-        self.models = models
+# class Forces:
+#     def __init__(self, models=[]):
+#         self.models = models
     
-    def energy(self, x, n):
-        ans = 0
-        for model in self.models:
-            ans += model.energy(x, n)
-        return ans
+#     def energy(self, x, n):
+#         ans = 0
+#         for model in self.models:
+#             ans += model.energy(x, n)
+#         return ans
 
-    def force(self, f, x, n):
-        f.fill(0)
-        for model in self.models:
-            model.force(f, x, n)
+#     def force(self, f, x, n):
+#         f.fill(0)
+#         for model in self.models:
+#             model.force(f, x, n)
 
-    def df(self, f, x, dx, n):
-        f.fill(0)
-        for model in self.models:
-            model.df(f, x, dx, n)
+#     def df(self, f, x, dx, n):
+#         f.fill(0)
+#         for model in self.models:
+#             model.df(f, x, dx, n)
     
-    def append(self, model):
-        self.models.append(model)
+#     def append(self, model):
+#         self.models.append(model)
 
 @ti.func
 def barrier(d: ti.f32, dm: ti.f32) -> ti.f32:
@@ -459,7 +459,7 @@ def Ds(verts, x):
 
 @ti.data_oriented
 class Elasticity:
-    def __init__(self, max_m = 1000, k = 1e3, nu = 0.0):
+    def __init__(self, max_m = 1000, k = 1e3, nu = 0.49):
         self.m = ti.field(dtype=ti.i32, shape=())
         self.m[None] = 0
         self.max_m = max_m

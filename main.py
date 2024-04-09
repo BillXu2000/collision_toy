@@ -6,20 +6,26 @@ if __name__ == '__main__':
 
     ti.init(arch=ti.cpu)
 
-    max_n = int(1e3)
+    n_max = int(1e3)
 
-    state = State()
-    state.n = ti.field(dtype=ti.i32, shape=())
-    state.x = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    state.v = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    state.f = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    state.mass = ti.field(dtype=ti.f32, shape=max_n)
-    x0 = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
-    v0 = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
+    # state = State()
+    # state.n = ti.field(dtype=ti.i32, shape=())
+    # state.x = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
+    # state.v = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
+    # state.f = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
+    # state.mass = ti.field(dtype=ti.f32, shape=n_max)
+    # x0 = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
+    # v0 = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
 
-    state.n[None] = 0
+    # state.n[None] = 0
+    # state.mass.fill(1)
+    # state.x.fill(-1)
+
+    dt = 1e-2
+    state = toy.solver.ImplicitSolver({'dim': 2, 'float': ti.f32, 'n_max': n_max, 'dt': dt, 'n': 0})
+    state.x = state.pos
+    state.v = state.vel
     state.mass.fill(1)
-    state.x.fill(-1)
 
     spring_Y = 10000
     springs = toy.force.Springs()
@@ -31,18 +37,19 @@ if __name__ == '__main__':
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls])
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction])
     # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, collision])
-    forces = toy.force.Forces([elasiticity, toy.force.Gravity(), attraction, collision])
-    implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
-    dt = 1e-2
+    # forces = toy.force.Forces([elasiticity, toy.force.Gravity(), attraction, collision])
+    forces = [elasiticity, toy.force.Gravity(), attraction, collision]
+    # implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=n_max))
+
+    state.forces = forces
 
     def add_polygon(poses):
         n = state.n[None]
-        print(n)
         m = len(poses)
         for i in range(m):
             state.x[n + i] = poses[i]
             state.v[n + i] = [0, 0]
-            state.mass[n + i] = -1
+            state.mass[n + i] = 1e5
             if m > 2 or i > 0: springs.add([n + i, n + (i + 1) % m], 0, 0)
         state.n[None] = n + m
 
@@ -99,13 +106,14 @@ if __name__ == '__main__':
             #         x[i][d] = 1  # move particle inside
             #         v[i][d] = 0  # stop it from moving further
     
-    newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=max_n))
+    # newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=n_max))
 
     def substep_implicit():
-        toy.cg.newton.n = state.n
-        implicit.set_target(state.x, state.v, state.mass, dt, state.n[None])
-        x_1 = newton.newton(implicit.energy, implicit.gradient, implicit.hessian, state.x, collision)
-        advance_implicit(x_1)
+        # toy.cg.newton.n = state.n
+        # implicit.set_target(state.x, state.v, state.mass, dt, state.n[None])
+        # x_1 = newton.newton(implicit.energy, implicit.gradient, implicit.hessian, state.x, collision)
+        state.run()
+        advance_implicit(state.ans)
 
     def new_particle(pos_x, pos_y):
         u = state.n[None]
@@ -128,9 +136,9 @@ if __name__ == '__main__':
             new_particle(i * .2, j * .2)
             new_particle(i * .2 + .1, j * .2)
             u = new_particle(i * .2, j * .2 + .1)
-            springs.add([u, u - 1], 0, 0)
-            springs.add([u, u - 2], 0, 0)
-            springs.add([u - 1, u - 2], 0, 0)
+            springs.add([u, u - 1], 0.1 * 2**.5, spring_Y)
+            springs.add([u, u - 2], 0.1, spring_Y)
+            springs.add([u - 1, u - 2], 0.1, spring_Y)
             elasiticity.add([u - 2, u - 1, u])
     # new_particle(.2, .2)
     elasiticity.init(state.x)
@@ -141,18 +149,18 @@ if __name__ == '__main__':
     canvas = window.get_canvas()
     canvas.set_background_color((.9,)*3)
     pause = False
-    newton.canvas = canvas
-    # x_wall = ti.Vector.field(2, dtype=ti.f32, shape=max_n)
+    # newton.canvas = canvas
+    # x_wall = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
     # x_wall[0] = [1, 0]
     # x_wall[1] = [1, 1]
     # x_wall[2] = [0, 1]
-    # i_wall = ti.Vector.field(2, dtype=ti.i32, shape=max_n)
+    # i_wall = ti.Vector.field(2, dtype=ti.i32, shape=n_max)
     # i_wall[0] = [0, 1]
     # i_wall[1] = [2, 1]
 
-    frames = {}
-    frames[0] = state.dumps()
-    i_frame = 0
+    # frames = {}
+    # frames[0] = state.dumps()
+    # i_frame = 0
     exporter = toy.export.exporter
 
     exporter.export({'springs': springs.vert.to_numpy(), 'type': 'springs'})
@@ -168,11 +176,11 @@ if __name__ == '__main__':
         #     c = 0x111111
         #     gui.circle(pos=state.x[i], color=c, radius=5)
         if not pause:
-            exporter.set_i_f(i_frame)
-            exporter.export(frames[i_frame])
+            # exporter.set_i_f(i_frame)
+            # exporter.export(frames[i_frame])
             substep_implicit()
-            i_frame += 1
-            frames[i_frame] = state.dumps()
+            # i_frame += 1
+            # frames[i_frame] = state.dumps()
         # if window.is_pressed('e'):
         #     toy.cg.ax_by(x0, 1, state.x, 0, state.x)
         #     toy.cg.ax_by(v0, 1, state.v, 0, state.v)

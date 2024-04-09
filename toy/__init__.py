@@ -1,5 +1,5 @@
 from .gui import run
-from . import force
+from . import force, solver
 import numpy as np
 
 class State:
