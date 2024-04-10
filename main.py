@@ -8,19 +8,6 @@ if __name__ == '__main__':
 
     n_max = int(1e3)
 
-    # state = State()
-    # state.n = ti.field(dtype=ti.i32, shape=())
-    # state.x = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
-    # state.v = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
-    # state.f = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
-    # state.mass = ti.field(dtype=ti.f32, shape=n_max)
-    # x0 = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
-    # v0 = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
-
-    # state.n[None] = 0
-    # state.mass.fill(1)
-    # state.x.fill(-1)
-
     dt = 1e-2
     state = toy.solver.ImplicitSolver({'dim': 2, 'float': ti.f32, 'n_max': n_max, 'dt': dt, 'n': 0})
     state.x = state.pos
@@ -30,16 +17,9 @@ if __name__ == '__main__':
     spring_Y = 10000
     springs = toy.force.Springs()
     attraction = toy.force.Attraction(spring_Y * .01)
-    # walls = toy.force.Walls([[0, -1], [0, 1], [-1, 0], [1, 0]], [0, 1, 0, 1], k=spring_Y, d_m=1e-2)
     collision = toy.force.Collision(state.n, springs, k=spring_Y * 1e0, d_m=1e-2)
     elasiticity = toy.force.Elasticity(k=spring_Y)
-    # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls, collision])
-    # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, walls])
-    # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction])
-    # forces = toy.force.Forces([springs, toy.force.Gravity(), attraction, collision])
-    # forces = toy.force.Forces([elasiticity, toy.force.Gravity(), attraction, collision])
     forces = [elasiticity, toy.force.Gravity(), attraction, collision]
-    # implicit = toy.force.Implicit(forces, lambda: ti.Vector.field(2, dtype=ti.f32, shape=n_max))
 
     state.forces = forces
 
@@ -55,8 +35,6 @@ if __name__ == '__main__':
 
 
     add_polygon([[0.05, 0.05], [1 - 0.05, 0.05], [1 - 0.05, 1 - 0.05], [0.05, 1 - 0.05]])
-    # add_polygon([[1, -100], [1, 100]])
-    # add_polygon([[0, 0], [0, 1]])
 
     @ti.kernel
     def advance_explicit():
@@ -120,13 +98,6 @@ if __name__ == '__main__':
         state.x[u] = [pos_x, pos_y]
         state.v[u] = [0, 0]
         state.n[None] = u + 1
-
-        # for v in range(u):
-        #     dist = (state.x[u] - state.x[v]).norm()
-        #     connection_radius = 0.15
-        #     if dist < connection_radius:
-        #         # springs.add([u, v], 0.1, spring_Y)
-        #         springs.add([u, v], 0.1, 0)
         return u
     
     # for i in range(1, 2):
@@ -149,14 +120,6 @@ if __name__ == '__main__':
     canvas = window.get_canvas()
     canvas.set_background_color((.9,)*3)
     pause = False
-    # newton.canvas = canvas
-    # x_wall = ti.Vector.field(2, dtype=ti.f32, shape=n_max)
-    # x_wall[0] = [1, 0]
-    # x_wall[1] = [1, 1]
-    # x_wall[2] = [0, 1]
-    # i_wall = ti.Vector.field(2, dtype=ti.i32, shape=n_max)
-    # i_wall[0] = [0, 1]
-    # i_wall[1] = [2, 1]
 
     # frames = {}
     # frames[0] = state.dumps()
@@ -178,7 +141,8 @@ if __name__ == '__main__':
         if not pause:
             # exporter.set_i_f(i_frame)
             # exporter.export(frames[i_frame])
-            substep_implicit()
+            # substep_implicit()
+            state.substep()
             # i_frame += 1
             # frames[i_frame] = state.dumps()
         # if window.is_pressed('e'):

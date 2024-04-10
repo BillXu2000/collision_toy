@@ -42,6 +42,21 @@ class ImplicitSolver:
             else:
                 self.__dict__[name].from_numpy(np.array(args[name]))
     
+    @ti.kernel
+    def advance(self):
+        n = self.n[None]
+        x = ti.static(self.pos)
+        v = ti.static(self.vel)
+        dt = self.dt[None]
+        for i in range(n):
+            if self.mass[i] != -1:
+                v[i] = (self.ans[i] - x[i]) / dt
+            x[i] = self.ans[i]
+
+    def substep(self):
+        self.run()
+        self.advance()
+    
     def ccd(self, pos, dx):
         ans = 1.0
         for force in self.forces:
