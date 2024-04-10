@@ -22,8 +22,6 @@ if __name__ == '__main__':
     elasiticity = toy.force.Elasticity(k=spring_Y)
 
     forces = [elasiticity, toy.force.Gravity(), attraction, collision]
-    hack = toy.force.Implicit(toy.force.Forces(forces), lambda: ti.Vector.field(2, dtype=ti.f32, shape=n_max))
-    state.hack = hack
 
     state.forces = forces
 

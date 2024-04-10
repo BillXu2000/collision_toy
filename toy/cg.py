@@ -2,18 +2,6 @@ import taichi as ti
 import json
 from . import export
 
-@ti.kernel
-def ax_by(z: ti.template(), a: ti.f32, x: ti.template(), b: ti.f32, y: ti.template()):
-    for i in range(newton.n[None]):
-        z[i] = a * x[i] + b * y[i]
-
-@ti.kernel
-def dot(a: ti.template(), b: ti.template()) -> ti.f32:
-    ans = 0.0
-    for i in range(newton.n[None]):
-        ans += a[i].dot(b[i])
-    return ans
-
 # @ti.kernel
 # def clean_r(r: ti.template(), status: ti.template()):
 #     for i in r:
@@ -107,9 +95,8 @@ class newton:
         return pos
     
     def cg(self, A, b, x0=None):
-        # dot = self.dot
-        # ax_by = self.ax_by
-        newton.n = self.n
+        dot = self.dot
+        ax_by = self.ax_by
 
         x = self.dx
         if x0 is not None:

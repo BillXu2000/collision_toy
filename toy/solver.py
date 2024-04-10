@@ -49,7 +49,7 @@ class ImplicitSolver:
         v = ti.static(self.vel)
         dt = self.dt[None]
         for i in range(n):
-            if self.mass[i] != -1:
+            if self.mass[i] < 5e4:
                 v[i] = (self.ans[i] - x[i]) / dt
             x[i] = self.ans[i]
 
@@ -65,8 +65,6 @@ class ImplicitSolver:
         return ans
     
     def run(self):
-        # self.hack.set_target(self.pos, self.vel, self.mass, self.dt[None], self.n[None])
-        # self.newton.newton(self.hack.energy, self.hack.gradient, self.hack.hessian, self.pos, self.ccd)
         self.newton.newton(self.energy, self.gradient, self.hessian, self.pos, self.ccd)
 
     @ti.kernel
