@@ -65,6 +65,8 @@ class ImplicitSolver:
         return ans
     
     def run(self):
+        # self.hack.set_target(self.pos, self.vel, self.mass, self.dt[None], self.n[None])
+        # self.newton.newton(self.hack.energy, self.hack.gradient, self.hack.hessian, self.pos, self.ccd)
         self.newton.newton(self.energy, self.gradient, self.hessian, self.pos, self.ccd)
 
     @ti.kernel

@@ -1,6 +1,7 @@
 import toy
 import taichi as ti, json, numpy as np, os, uuid, subprocess
 from toy import State
+import cProfile
 
 if __name__ == '__main__':
 
@@ -19,7 +20,10 @@ if __name__ == '__main__':
     attraction = toy.force.Attraction(spring_Y * .01)
     collision = toy.force.Collision(state.n, springs, k=spring_Y * 1e0, d_m=1e-2)
     elasiticity = toy.force.Elasticity(k=spring_Y)
+
     forces = [elasiticity, toy.force.Gravity(), attraction, collision]
+    hack = toy.force.Implicit(toy.force.Forces(forces), lambda: ti.Vector.field(2, dtype=ti.f32, shape=n_max))
+    state.hack = hack
 
     state.forces = forces
 
@@ -119,7 +123,6 @@ if __name__ == '__main__':
     window = ti.ui.Window("Taichi MLS-MPM-128", res=(800, 800), vsync=True)
     canvas = window.get_canvas()
     canvas.set_background_color((.9,)*3)
-    pause = False
 
     # frames = {}
     # frames[0] = state.dumps()
@@ -128,6 +131,7 @@ if __name__ == '__main__':
 
     exporter.export({'springs': springs.vert.to_numpy(), 'type': 'springs'})
 
+    pause = False
 
     while window.running:
         # for i in range(springs.m[None]):
