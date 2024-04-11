@@ -2,12 +2,22 @@ import toy
 import taichi as ti, json, numpy as np, os, uuid, subprocess
 from toy import State
 import cProfile
+import argparse
 
 if __name__ == '__main__':
     ti.init(arch=ti.cpu)
-    with open('./init.log', 'r') as fi:
-        args = json.load(fi)
-        state = toy.solver.ImplicitSolver(args)
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('--log', default='./init.log')
+    input_args = argparser.parse_args()
+    with open(input_args.log, 'r') as fi:
+        lines = fi.readlines()
+    frames = []
+    for line in lines:
+        if line.strip() == '': continue
+        frames.append(json.loads(line))
+
+    state = toy.solver.ImplicitSolver(frames[0])
+
     for i in state.forces:
         if isinstance(i, toy.force.Collision):
             collision = i
@@ -20,18 +30,24 @@ if __name__ == '__main__':
     window = ti.ui.Window("Taichi MLS-MPM-128", res=(800, 800), vsync=True)
     canvas = window.get_canvas()
     canvas.set_background_color((.9,)*3)
+    gui = window.get_gui()
 
-    # frames = {}
     # frames[0] = state.dumps()
-    # i_frame = 0
     exporter = toy.export.exporter
 
     # exporter.export({'springs': springs.vert.to_numpy(), 'type': 'springs'})
-    exporter.export({'springs': collision.vert.to_numpy(), 'type': 'springs'})
+    # exporter.export({'springs': collision.vert.to_numpy(), 'type': 'springs'})
 
-    pause = False
+    pause = len(frames) > 1
+    i_f = 0
 
     while window.running:
+        i_new = gui.slider_int('i_f', i_f, 0, len(frames) - 1)
+        i_new = min(i_new, len(frames) - 1)
+        if i_new != i_f:
+            state.load_xv(frames[i_new])
+            i_f = i_new
+            pause = True
         # for i in range(springs.m[None]):
         #     v = springs.vert[i]
         #     if v[0] < state.n[None] and v[1] < state.n[None]:
@@ -41,12 +57,18 @@ if __name__ == '__main__':
         #     c = 0x111111
         #     gui.circle(pos=state.x[i], color=c, radius=5)
         if not pause:
-            # exporter.set_i_f(i_frame)
-            # exporter.export(frames[i_frame])
+            # exporter.export(frames[i_f])
             # substep_implicit()
+            if i_f < len(frames) - 1:
+                i_f = len(frames) - 1
+                state.load_xv(frames[i_f])
             state.substep()
-            # i_frame += 1
-            # frames[i_frame] = state.dumps()
+            i_f += 1
+            exporter.set_i_f(i_f)
+            data = state.dumps()
+            exporter.export(data)
+            frames.append(data)
+            # frames[i_f] = state.dumps()
         # if window.is_pressed('e'):
         #     toy.cg.ax_by(x0, 1, state.x, 0, state.x)
         #     toy.cg.ax_by(v0, 1, state.v, 0, state.v)
@@ -63,19 +85,19 @@ if __name__ == '__main__':
             shift = .5
             if e.key in [ti.ui.ESCAPE]:
                 window.running = False
-            elif e.key == ti.ui.LMB:
-                new_particle(*mouse)
+            # elif e.key == ti.ui.LMB:
+            #     new_particle(*mouse)
             elif e.key == 'n':
                 state.substep()
             elif e.key == ' ':
                 pause = not pause
-            # elif e.key == 'b' and i_frame > 1:
-            #     i_frame -= 1
-            #     state.loads(frames[i_frame - 1])
+            # elif e.key == 'b' and i_f > 1:
+            #     i_f -= 1
+            #     state.loads(frames[i_f - 1])
             # elif e.key == 's':
             #     # fn = f'./output/{uuid.uuid4().hex}.json'
             #     fn = f'./output/tmp.json'
-            #     data = json.dumps(frames[i_frame - 1])
+            #     data = json.dumps(frames[i_f - 1])
             #     with open(fn, 'w') as fi:
             #         fi.write(data)
             # elif e.key == 'l':

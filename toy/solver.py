@@ -46,6 +46,21 @@ class ImplicitSolver:
         for i in args['forces']:
             self.forces.append(force.loads(i, self))
     
+    def load_xv(self, args):
+        def load(name):
+            field = self.__dict__[name]
+            if name in args:
+                np_arr = args[name]
+                if isinstance(np_arr, str):
+                    np_arr = export.b642np(np_arr)
+                np_arr = np.array(np_arr)
+                assert len(np_arr.shape) == 2
+                assert np_arr.shape[1] == self.dim
+                np_arr.resize((field.shape + (field.n,)))
+                field.from_numpy(np_arr)
+        load('pos')
+        load('vel')
+    
     def dumps(self):
         ans = {}
         constants = ['dim', 'n_max']
