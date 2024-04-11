@@ -4,117 +4,16 @@ from toy import State
 import cProfile
 
 if __name__ == '__main__':
-
     ti.init(arch=ti.cpu)
+    with open('./init.log', 'r') as fi:
+        args = json.load(fi)
+        state = toy.solver.ImplicitSolver(args)
+    for i in state.forces:
+        if isinstance(i, toy.force.Collision):
+            collision = i
 
-    n_max = int(1e3)
-
-    dt = 1e-2
-    state = toy.solver.ImplicitSolver({'dim': 2, 'float': ti.f32, 'n_max': n_max, 'dt': dt, 'n': 0})
     state.x = state.pos
     state.v = state.vel
-    state.mass.fill(1)
-
-    spring_Y = 10000
-    springs = toy.force.Springs()
-    attraction = toy.force.Attraction(spring_Y * .01)
-    collision = toy.force.Collision(state.n, springs, k=spring_Y * 1e0, d_m=1e-2)
-    elasiticity = toy.force.Elasticity(k=spring_Y)
-
-    forces = [elasiticity, toy.force.Gravity(), attraction, collision]
-
-    state.forces = forces
-
-    def add_polygon(poses):
-        n = state.n[None]
-        m = len(poses)
-        for i in range(m):
-            state.x[n + i] = poses[i]
-            state.v[n + i] = [0, 0]
-            state.mass[n + i] = 1e5
-            if m > 2 or i > 0: springs.add([n + i, n + (i + 1) % m], 0, 0)
-        state.n[None] = n + m
-
-
-    add_polygon([[0.05, 0.05], [1 - 0.05, 0.05], [1 - 0.05, 1 - 0.05], [0.05, 1 - 0.05]])
-
-    @ti.kernel
-    def advance_explicit():
-        n = state.n[None]
-        x = ti.static(state.x)
-        v = ti.static(state.v)
-        f = ti.static(state.f)
-
-        # We use a semi-implicit Euler (aka symplectic Euler) time integrator
-        for i in range(n):
-            v[i] += dt * f[i] / state.mass[i]
-
-            x[i] += v[i] * dt
-
-            # Collide with four walls
-            for d in ti.static(range(2)):
-                # d = 0: treating X (horizontal) component
-                # d = 1: treating Y (vertical) component
-
-                if x[i][d] < 0:  # Bottom and left
-                    x[i][d] = 0  # move particle inside
-                    v[i][d] = 0  # stop it from moving further
-
-                if x[i][d] > 1:  # Top and right
-                    x[i][d] = 1  # move particle inside
-                    v[i][d] = 0  # stop it from moving further
-    
-    def substep_explicit():
-        forces.force(state.f, state.x, state.n[None])
-        advance_explicit()
-
-    @ti.kernel
-    def advance_implicit(x_1:ti.template()):
-        n = state.n[None]
-        x = ti.static(state.x)
-        v = ti.static(state.v)
-        for i in range(n):
-            if state.mass[i] != -1:
-                v[i] = (x_1[i] - x[i]) / dt
-            x[i] = x_1[i]
-            # for d in ti.static(range(2)):
-            #     if x[i][d] < 0:  # Bottom and left
-            #         x[i][d] = 0  # move particle inside
-            #         v[i][d] = 0  # stop it from moving further
-
-            #     if x[i][d] > 1:  # Top and right
-            #         x[i][d] = 1  # move particle inside
-            #         v[i][d] = 0  # stop it from moving further
-    
-    # newton = toy.cg.newton(lambda: ti.Vector.field(2, dtype=ti.f32, shape=n_max))
-
-    def substep_implicit():
-        # toy.cg.newton.n = state.n
-        # implicit.set_target(state.x, state.v, state.mass, dt, state.n[None])
-        # x_1 = newton.newton(implicit.energy, implicit.gradient, implicit.hessian, state.x, collision)
-        state.run()
-        advance_implicit(state.ans)
-
-    def new_particle(pos_x, pos_y):
-        u = state.n[None]
-        state.x[u] = [pos_x, pos_y]
-        state.v[u] = [0, 0]
-        state.n[None] = u + 1
-        return u
-    
-    # for i in range(1, 2):
-    #     for j in range(3, 4):
-    for i in range(1, 5):
-        for j in range(3, 5):
-            new_particle(i * .2, j * .2)
-            new_particle(i * .2 + .1, j * .2)
-            u = new_particle(i * .2, j * .2 + .1)
-            springs.add([u, u - 1], 0.1 * 2**.5, spring_Y)
-            springs.add([u, u - 2], 0.1, spring_Y)
-            springs.add([u - 1, u - 2], 0.1, spring_Y)
-            elasiticity.add([u - 2, u - 1, u])
-    # new_particle(.2, .2)
-    elasiticity.init(state.x)
 
 
     # gui = ti.GUI("Explicit Mass Spring System", res=(512, 512), background_color=0xDDDDDD)
@@ -127,7 +26,8 @@ if __name__ == '__main__':
     # i_frame = 0
     exporter = toy.export.exporter
 
-    exporter.export({'springs': springs.vert.to_numpy(), 'type': 'springs'})
+    # exporter.export({'springs': springs.vert.to_numpy(), 'type': 'springs'})
+    exporter.export({'springs': collision.vert.to_numpy(), 'type': 'springs'})
 
     pause = False
 
@@ -155,7 +55,7 @@ if __name__ == '__main__':
         #     toy.cg.ax_by(state.v, 1, v0, 0, state.v)
         if not window.is_pressed("v"):
             canvas.circles(centers=state.x, radius=.01, color=(.6,)*3)
-            canvas.lines(state.x, width=.004, indices=springs.vert)
+            canvas.lines(state.x, width=.004, indices=collision.vert)
         # canvas.lines(x_wall, width=.01, indices = i_wall)
         window.show()
         mouse = window.get_cursor_pos()
@@ -166,7 +66,7 @@ if __name__ == '__main__':
             elif e.key == ti.ui.LMB:
                 new_particle(*mouse)
             elif e.key == 'n':
-                substep_implicit()
+                state.substep()
             elif e.key == ' ':
                 pause = not pause
             # elif e.key == 'b' and i_frame > 1:
@@ -236,8 +136,9 @@ if __name__ == '__main__':
         #     walls.b[1] += shift
         #     x_wall[1].y += shift
         #     x_wall[2].y += shift
-        if window.is_pressed(ti.ui.RMB):
-            attraction.activate(mouse)
-        else:
-            attraction.deactivate()
+
+        # if window.is_pressed(ti.ui.RMB):
+        #     attraction.activate(mouse)
+        # else:
+        #     attraction.deactivate()
 

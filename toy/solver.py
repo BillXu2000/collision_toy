@@ -1,40 +1,64 @@
 import taichi as ti
 import numpy as np
 import json
-from . import cg, export
+from . import cg, export, force
 
 @ti.data_oriented
 class ImplicitSolver:
     def __init__(self, args):
-        # self.dim = args.get('dim', 2)
-        # self.float = args.get('float', ti.f32)
-        # self.n_max = args.get('n_max', 1000)
+        self.args = args
+        for i in args:
+            k = args[i]
+            if isinstance(k, str):
+                args[i] = export.b642np(k)
         self.dim = args['dim']
-        self.float = args['float']
         self.n_max = args['n_max']
 
-        self.dt = ti.field(self.float, shape=())
+        self.dt = ti.field(ti.f32, shape=())
         if 'dt' in args:
             self.dt[None] = args['dt']
         self.n = ti.field(ti.i32, shape=())
         if 'n' in args:
             self.n[None] = args['n']
-        self.gen_field = lambda: ti.Vector.field(self.dim, dtype=self.float, shape=self.n_max)
+        self.gen_field = lambda: ti.Vector.field(self.dim, dtype=ti.f32, shape=self.n_max)
 
         def gen(name):
             ans = self.gen_field()
             if name in args:
-                ans.from_numpy(args[name])
+                np_arr = np.array(args[name])
+                assert len(np_arr.shape) == 2
+                assert np_arr.shape[1] == ans.n
+                np_arr.resize((ans.shape + (ans.n,)))
+                ans.from_numpy(np_arr)
             return ans
         self.pos = gen('pos')
         self.vel = gen('vel')
-        self.mass = ti.field(self.float, shape=self.n_max)
+        self.mass = ti.field(ti.f32, shape=self.n_max)
         if 'mass' in args:
-            self.mass.from_numpy(args['mass'])
+            np_arr = np.array(args['mass'])
+            assert len(np_arr.shape) == 1
+            self.mass.from_numpy(np.resize(np_arr, self.mass.shape))
 
         self.newton = cg.newton(self.n, self.gen_field)
         self.ans = self.newton.pos
-        
+        self.forces = []
+
+        for i in args['forces']:
+            self.forces.append(force.loads(i, self))
+    
+    def dumps(self):
+        ans = {}
+        constants = ['dim', 'n_max']
+        ans.update([[i, self.__dict__[i]] for i in constants])
+        arrays = ['pos', 'vel', 'mass']
+        ans.update([[i, export.np2b64(self.__dict__[i].to_numpy()[:self.n[None]])] for i in arrays])
+        vars = ['dt', 'n']
+        ans.update([[i, self.__dict__[i][None]] for i in vars])
+        ans['forces'] = []
+        for i in self.forces:
+            ans['forces'].append(i.dumps())
+        return ans
+    
     def update(self, args):
         for name in args:
             if name == 'forces':
