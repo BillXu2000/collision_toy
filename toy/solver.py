@@ -112,7 +112,7 @@ class ImplicitSolver:
         n = self.n[None]
         dt = self.dt[None]
         for i in range(n):
-            target = self.x[i] + dt * self.v[i]
+            target = self.pos[i] + dt * self.vel[i]
             energy += .5 * (x[i] - target).norm_sqr() * self.mass[i]
         return energy
 
@@ -128,7 +128,7 @@ class ImplicitSolver:
         n = self.n[None]
         dt = self.dt[None]
         for i in range(n):
-            target = self.x[i] + dt * self.v[i]
+            target = self.pos[i] + dt * self.vel[i]
             de[i] = (x[i] - target) * self.mass[i] - dt**2 * de[i]
 
     def gradient(self, de, x):

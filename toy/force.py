@@ -1,6 +1,7 @@
 import taichi as ti
 import numpy as np, json
 from . import cg, export
+import math
 
 def loads(args, solver):
     return globals()[args['class']](args, solver)
@@ -505,3 +506,133 @@ class Elasticity:
             for i in ti.static(range(2)):
                 f[verts[i]] += dH[:, i]
                 f[verts[2]] -= dH[:, i]
+
+@ti.data_oriented
+class Elasticity_3d:
+    def __init__(self, args, solver):
+        self.dim = 3
+
+        Elasticity.arrays = ['vert', 'F_B', 'F_W']
+        tmp = solver.args.copy()
+        tmp.update(args)
+        args = tmp
+
+        k = args['young']
+        nu = args['nu']
+
+        self.m = ti.field(dtype=ti.i32, shape=())
+        self.m_max = args['m_max']
+        self.k = k
+        self.nu = nu
+        self.mu = k / (2 * (1 + nu))
+        self.la = k * nu / ((1 + nu) * (1 - 2 * nu))
+        self.vert = ti.Vector.field(self.dim + 1, dtype=ti.i32, shape=self.m_max)
+        self.F_B = ti.Matrix.field(self.dim, self.dim, dtype=ti.f32, shape=self.m_max)
+        self.F_W = ti.field(dtype=ti.f32, shape=self.m_max)
+
+        for name in Elasticity.arrays:
+            if name not in args: continue
+            arr = args[name]
+            if isinstance(arr, str):
+                arr = export.b642np(arr)
+            arr = np.array(arr)
+            self.__dict__[name].from_numpy(np.resize(arr, (self.m_max, *arr.shape[1:])))
+            self.m[None] = arr.shape[0]
+    
+    def dumps(self):
+        ans = {'class': 'Elasticity', 'young': self.k, 'nu': self.nu, 'm_max': self.m_max}
+        ans.update([[i, export.np2b64(self.__dict__[i].to_numpy()[:self.m[None]])] for i in Elasticity.arrays])
+        return ans
+    
+    def add(self, vert):
+        m = self.m[None]
+        self.vert[m] = vert
+        self.m[None] = m + 1
+        return m
+    
+    @ti.func
+    def Ds(self, verts, x):
+        return ti.Matrix.cols([x[verts[i]] - x[verts[self.dim]] for i in range(self.dim)])
+    
+    @ti.kernel
+    def init(self, x: ti.template(), mass: ti.template()):
+        for i in range(self.m[None]):
+            verts = self.vert[i]
+            F = self.Ds(verts, x)
+            self.F_B[i] = F.inverse()
+            self.F_W[i] = ti.abs(F.determinant()) / ti.static(math.factorial(self.dim))
+            for j in ti.static(range(self.dim + 1)):
+                mass[verts[j]] += self.F_W[i] / (self.dim + 1) * .01
+
+    
+    @ti.kernel
+    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
+        ans = 0.
+        for i in range(self.m[None]):
+            verts = self.vert[i]
+            F = self.Ds(verts, x) @ self.F_B[i]
+            I1 = (F.transpose() @ F).trace()
+            J = F.determinant()
+            # ans += self.F_W[i] * (self.mu * (.5 * I1 - 1.5 - ti.log(J)) + self.la * .5 * ti.log(J)**2) # neohookean
+            U, sigma, V = ti.svd(F)
+            s = 0.0
+            for j in ti.static(range(self.dim)):
+                s += (sigma[j, j] - 1)**2
+            ans += self.F_W[i] * (self.mu * s) # corotated, mu only
+        return ans
+
+    @ti.kernel
+    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
+        for i in range(self.m[None]):
+            verts = self.vert[i]
+            F = self.Ds(verts, x) @ self.F_B[i]
+            U, sig, V = ssvd(F)
+            R = U @ V.transpose()
+            J = F.determinant()
+            # P = self.mu * (F - F.inverse().transpose()) + self.la * ti.log(J) * F.inverse().transpose()
+            P = 2 * self.mu * (F - U @ V.transpose()) # corotated, mu only
+            H = -self.F_W[i] * P @ self.F_B[i].transpose()
+            for i in ti.static(range(self.dim)):
+                f[verts[i]] += H[:, i]
+                f[verts[self.dim]] -= H[:, i]
+
+    @ti.kernel
+    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
+        for i in range(self.m[None]):
+            verts = self.vert[i]
+            F = self.Ds(verts, x) @ self.F_B[i]
+            dD = ti.Matrix.cols([dx[verts[j]] - dx[verts[self.dim]] for j in ti.static(range(self.dim))])
+            dF = dD @ self.F_B[i]
+            Fmt = F.transpose().inverse()
+            J = F.determinant()
+            # dP = self.mu * dF + (self.mu - self.la * ti.log(J)) * Fmt @ dF.transpose() @ Fmt + self.la * (F.inverse() @ dF).trace() * Fmt
+            dP = 2 * self.mu * dF # hacked corotated
+            dH = -self.F_W[i] * dP @ self.F_B[i].transpose()
+            for i in ti.static(range(self.dim)):
+                f[verts[i]] += dH[:, i]
+                f[verts[self.dim]] -= dH[:, i]
+
+@ti.data_oriented
+class Floor_3d:
+    def __init__(self, args, solver):
+        self.k = args['k']
+
+    @ti.kernel
+    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
+        ans = .0
+        for i in range(n):
+            if x[i].y >= 0: continue
+            ans += .5 * self.k * x[i].y**2
+        return ans
+
+    @ti.kernel
+    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
+        for i in range(n):
+            if x[i].y >= 0: continue
+            f[i].y += -self.k * x[i].y
+    
+    @ti.kernel
+    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
+        for i in range(n):
+            if x[i].y >= 0: continue
+            f[i].y += -self.k * dx[i].y

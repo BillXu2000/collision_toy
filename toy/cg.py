@@ -56,7 +56,7 @@ class newton:
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
-        n_iter = 5
+        n_iter = 100
         for iter in range(n_iter):
             f(b, pos)
             force = b.to_numpy()
@@ -64,7 +64,7 @@ class newton:
             def A(ans, dx):
                 return df(ans, pos, dx)
             dx = self.cg(A, b)
-            if dot(dx, dx) < 1e-10: break
+            # if dot(dx, dx) < 1e-10: break
             e_0 = energy(pos)
             x_1 = b
             if ccd is not None:
@@ -78,12 +78,14 @@ class newton:
                 ax_by(x_1, 1, pos, alpha, dx)
                 ans = energy(x_1)
                 # print(f'alpha = {alpha}, ans = {ans}, e_0 = {e_0}')
-                if alpha < 1e-9: exit(0)
+                # if alpha < 1e-9: exit(0)
                 return ans
             while not ene() <= e_0:
                 alpha /= 2
                 # print(alpha)
             d_e = ene() - e_0
+            # print(iter, e_0, d_e, alpha, abs(d_e / e_0))
+            if abs(d_e / e_0) < 1e-6: break
             if self.export:
                 ans = {'type': 'newton', 'pos': pos.to_numpy(), 'dx': dx.to_numpy(), 'force': force, 'i_n': iter, 'e_0': e_0, 'd_e': d_e, 'alpha': alpha, 'n': self.n[None]}
                 export.exporter.export(ans)

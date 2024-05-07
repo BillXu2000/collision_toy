@@ -121,8 +121,20 @@ if __name__ == '__main__':
             elif e.key == ti.ui.UP:
                 state.v[2].y += shift
                 state.v[3].y += shift
-            elif e.key == 'i':
-                subprocess.Popen(['python3', './view.py'])
+            # elif e.key == 'i':
+            #     subprocess.Popen(['python3', './view.py'])
+            elif e.key == 'j':
+                if i_f != 0:
+                    i_f -= 1
+                    state.load_xv(frames[i_f])
+                    pause = True
+            elif e.key == 'k':
+                if i_f < len(frames) - 1:
+                    i_f += 1
+                    state.load_xv(frames[i_f])
+                    pause = True
+            elif e.key == 'd':
+                state.run()
             # elif e.key == 'r':
             #     forces.models.remove(collision)
             # elif e.key == 'c':
