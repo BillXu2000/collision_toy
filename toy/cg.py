@@ -47,6 +47,7 @@ class newton:
         self.dx = gen_field()
         self.A_p = gen_field()
         self.pos = gen_field()
+        self.x_1 = gen_field()
         self.export = False
     
     def newton(self, energy, f, df, x0, ccd = None):
@@ -56,7 +57,7 @@ class newton:
         pos = self.pos
         b = self.b
         pos.copy_from(x0)
-        n_iter = 100
+        n_iter = 10
         for iter in range(n_iter):
             f(b, pos)
             force = b.to_numpy()
@@ -66,7 +67,7 @@ class newton:
             dx = self.cg(A, b)
             # if dot(dx, dx) < 1e-10: break
             e_0 = energy(pos)
-            x_1 = b
+            x_1 = self.x_1
             if ccd is not None:
                 alpha = ccd(pos, dx)
             else:
@@ -91,7 +92,7 @@ class newton:
                 export.exporter.export(ans)
             ax_by(pos, 1, pos, alpha, dx)
             # self.canvas.circles(centers=pos, radius=.01, color=(.6, 0, 0))
-            mi = pos.to_numpy()[:3, 1].min()
+            # mi = pos.to_numpy()[:3, 1].min()
             # print(f'iter = {iter}, alpha = {alpha}, min = {mi}, e_0 = {e_0}, d_e = {d_e}')
             # if mi <= 1e-3: exit(0)
         return pos
@@ -114,8 +115,8 @@ class newton:
         r_2 = dot(r, r)
         r_0 = r_2
         n_iter = 20
-        eps = 1e-10
-        if r_0 < 1e-20: return
+        eps = 1e-6 * r_0 # TODO: reasonable epsilon
+        if r_0 < 1e-20: return x
         for iter in range(n_iter):
             A(A_p, p)
             dot_ans = dot(p, A_p)
@@ -132,7 +133,7 @@ class newton:
         # print('cg', iter, r_2)
         A(A_p, x)
         ax_by(r, 1, b, -1, A_p)
-        err = dot(r, r)
+        # err = dot(r, r)
         # if not err < 1e-7: print(iter, err, r_2)
         return x
 

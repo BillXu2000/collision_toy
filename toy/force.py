@@ -276,6 +276,7 @@ class Gravity:
         args = tmp
 
         self.gravity = args['gravity']
+        self.solver = solver
     
     def dumps(self):
         return {'class': 'Gravity', 'gravity': self.gravity}
@@ -284,13 +285,13 @@ class Gravity:
     def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
         ans = 0.
         for i in range(n):
-            ans += -x[i].dot(ti.Vector(self.gravity))
+            ans += -x[i].dot(ti.Vector(self.gravity)) * self.solver.mass[i]
         return ans
 
     @ti.kernel
     def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
         for i in range(n):
-            f[i] += self.gravity
+            f[i] += self.gravity * self.solver.mass[i]
     
     @ti.kernel
     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
@@ -562,7 +563,7 @@ class Elasticity_3d:
             self.F_B[i] = F.inverse()
             self.F_W[i] = ti.abs(F.determinant()) / ti.static(math.factorial(self.dim))
             for j in ti.static(range(self.dim + 1)):
-                mass[verts[j]] += self.F_W[i] / (self.dim + 1) * .01
+                mass[verts[j]] += self.F_W[i] / (self.dim + 1)
 
     
     @ti.kernel
@@ -573,12 +574,12 @@ class Elasticity_3d:
             F = self.Ds(verts, x) @ self.F_B[i]
             I1 = (F.transpose() @ F).trace()
             J = F.determinant()
-            # ans += self.F_W[i] * (self.mu * (.5 * I1 - 1.5 - ti.log(J)) + self.la * .5 * ti.log(J)**2) # neohookean
-            U, sigma, V = ti.svd(F)
-            s = 0.0
-            for j in ti.static(range(self.dim)):
-                s += (sigma[j, j] - 1)**2
-            ans += self.F_W[i] * (self.mu * s) # corotated, mu only
+            ans += self.F_W[i] * (self.mu * (.5 * I1 - 1.5 - ti.log(J)) + self.la * .5 * ti.log(J)**2) # neohookean
+            # U, sigma, V = ti.svd(F)
+            # s = 0.0
+            # for j in ti.static(range(self.dim)):
+            #     s += (sigma[j, j] - 1)**2
+            # ans += self.F_W[i] * (self.mu * s) # corotated, mu only
         return ans
 
     @ti.kernel
@@ -586,11 +587,11 @@ class Elasticity_3d:
         for i in range(self.m[None]):
             verts = self.vert[i]
             F = self.Ds(verts, x) @ self.F_B[i]
-            U, sig, V = ssvd(F)
-            R = U @ V.transpose()
             J = F.determinant()
-            # P = self.mu * (F - F.inverse().transpose()) + self.la * ti.log(J) * F.inverse().transpose()
-            P = 2 * self.mu * (F - U @ V.transpose()) # corotated, mu only
+            P = self.mu * (F - F.inverse().transpose()) + self.la * ti.log(J) * F.inverse().transpose()
+            # U, sig, V = ssvd(F)
+            # R = U @ V.transpose()
+            # P = 2 * self.mu * (F - U @ V.transpose()) # corotated, mu only
             H = -self.F_W[i] * P @ self.F_B[i].transpose()
             for i in ti.static(range(self.dim)):
                 f[verts[i]] += H[:, i]
@@ -605,8 +606,8 @@ class Elasticity_3d:
             dF = dD @ self.F_B[i]
             Fmt = F.transpose().inverse()
             J = F.determinant()
-            # dP = self.mu * dF + (self.mu - self.la * ti.log(J)) * Fmt @ dF.transpose() @ Fmt + self.la * (F.inverse() @ dF).trace() * Fmt
-            dP = 2 * self.mu * dF # hacked corotated
+            dP = self.mu * dF + (self.mu - self.la * ti.log(J)) * Fmt @ dF.transpose() @ Fmt + self.la * (F.inverse() @ dF).trace() * Fmt
+            # dP = 2 * self.mu * dF # hacked corotated
             dH = -self.F_W[i] * dP @ self.F_B[i].transpose()
             for i in ti.static(range(self.dim)):
                 f[verts[i]] += dH[:, i]
@@ -616,6 +617,7 @@ class Elasticity_3d:
 class Floor_3d:
     def __init__(self, args, solver):
         self.k = args['k']
+        self.solver = solver
 
     @ti.kernel
     def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:

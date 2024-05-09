@@ -46,6 +46,9 @@ class ImplicitSolver:
         for i in args['forces']:
             self.forces.append(force.loads(i, self))
     
+    def add_forces(self, forces):
+        self.forces += forces
+    
     def load_xv(self, args):
         def load(name):
             field = self.__dict__[name]

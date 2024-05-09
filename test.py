@@ -35,17 +35,27 @@ def mesh2tet():
     tetra = wm.Tetrahedralizer(stop_quality=1000)
     tetra.set_mesh(v, f)
     tetra.tetrahedralize()
+    print(dir(tetra))
     vt, tt = tetra.get_tet_mesh()
     ft = updated_surface(v, vt, f)
     print(vt, ft)
 
-    ans = pymeshlab.Mesh(vertex_matrix=vt, face_matrix=ft)
-    _ms = pymeshlab.MeshSet()
-    _ms.add_mesh(ans)
-    _ms.save_current_mesh('tetra.ply')
+    # ans = pymeshlab.Mesh(vertex_matrix=vt, face_matrix=ft)
+    # _ms = pymeshlab.MeshSet()
+    # _ms.add_mesh(ans)
+    # _ms.save_current_mesh('tetra.ply')
 
     msh = meshio.Mesh(vt, {'tetra': tt, 'triangle': ft})
     msh.write('test.msh')
+
+    face_all = []
+    for i in tt:
+        for j in range(4):
+            face_all.append([i[k] for k in range(4) if k != j])
+    
+    msh_all = meshio.Mesh(vt, {'tetra': tt, 'triangle': face_all})
+    msh_all.write('all.ply')
+    # msh.write('test.ply')
 
     msh = meshio.read('./test.msh')
     dict = {}
@@ -95,11 +105,21 @@ def test_taichi():
 # print(mesh.faces)
 
 # mesh2tet()
-wm.tetrahedralize('./bunny1k.ply', './tet.msh')
 
-# msh = meshio.read('./test.msh')
-# msh.write('./test.ply')
+# msh = meshio.read('./tet2.msh')
+# tt = msh.cells[0].data
+# face_all = []
+# for i in tt:
+#     for j in range(4):
+#         face_all.append([i[k] for k in range(4) if k != j])
+
+# msh_all = meshio.Mesh(msh.points, {'triangle': face_all})
+# msh_all.write('all.ply')
 # dict = {}
 # for i in msh.cells:
+#     print(i)
 #     dict[i.type] = i.data
 # print(dict)
+
+from toy import tools
+tools.mesh2tet('bunny1k.ply', 'bunny1k.msh')

@@ -2,6 +2,7 @@ import taichi as ti, numpy as np
 import toy
 import matplotlib.pyplot as plt
 import math
+import meshio
 
 if __name__ == '__main__':
     global vel
@@ -32,30 +33,38 @@ if __name__ == '__main__':
     
     def load_bunny():
         global faces, tets, pos, mass, vel
-        faces = np.load('./bunny_face.npy').astype(np.float32)
-        pos = np.load('./bunny_vert.npy').astype(np.float32)
-        tets = np.load('./bunny_ele.npy').astype(np.int32)
+        # faces = np.load('./bunny_face.npy').astype(np.float32)
+        # pos = np.load('./bunny_vert.npy').astype(np.float32)
+        # tets = np.load('./bunny_ele.npy').astype(np.int32)
 
-        pos[:, 1] += 1.5
+        # mesh = meshio.read('./tet.msh')
+        # mesh = meshio.read('./oct.msh')
+        mesh = meshio.read('./scratch/bunny1k.msh')
+        cells = dict([(i.type, i.data) for i in mesh.cells])
+        pos = mesh.points
+        faces = cells['triangle']
+        tets = cells['tetra'][:]
+
+        pos[:, 1] += 2.5
         pos *= .3
         vel = np.array(pos)
         vel *= 0
         mass = np.zeros(len(pos), dtype=np.float32)
-        # mass += .0001
 
-        volumes = []
-        for i in tets:
-            print(i)
-            volumes.append(np.linalg.det(np.vstack([pos[i[1]] - pos[i[0]], pos[i[2]] - pos[i[0]], pos[i[3]] - pos[i[0]]])) / 6)
+        # volumes = []
+        # for i in tets:
+        #     volumes.append(np.linalg.det(np.vstack([pos[i[1]] - pos[i[0]], pos[i[2]] - pos[i[0]], pos[i[3]] - pos[i[0]]])) / 6)
+        # print('volume sum', sum(volumes))
+        
 
-        fig, ax = plt.subplots()
-        ax.hist([math.log10(i) for i in volumes])
+        # fig, ax = plt.subplots()
+        # ax.hist([math.log10(i) for i in volumes])
+        # # ax.hist(volumes)
+        # # ax.set_xscale('log')
         # ax.hist(volumes)
-        # ax.set_xscale('log')
-        ax.hist(volumes)
-        plt.show()
+        # plt.show()
 
-        exit(0)
+        # exit(0)
 
     # tets.append(new_tet([0, 1, 0]))
     load_bunny()
@@ -76,10 +85,10 @@ if __name__ == '__main__':
     gravity = toy.force.Gravity({'gravity': [0, -9.8, 0]}, solver=state)
     floor = toy.force.Floor_3d({'k': spring_Y}, solver=state)
 
-    forces = [elasiticity, gravity, floor]
-
-    state.forces = forces
+    state.add_forces([elasiticity, gravity, floor])
     elasiticity.init(state.pos, state.mass)
+
+    state.mass.fill(1 / len(pos)) # TODO : mass hack
 
 
 
@@ -106,7 +115,7 @@ if __name__ == '__main__':
         x_frame[i] = [i % 2, (i & 2) >> 1, (i & 4) >> 2]
         for j in [1, 2, 4]:
             if i & j: indices_list.append([i - j, i])
-    print(indices_list)
+    # print(indices_list)
     indices_frame.from_numpy(np.array(indices_list).reshape(-1))
 
 
@@ -140,3 +149,4 @@ if __name__ == '__main__':
         scene.lines(vertices=x_frame, width=1, indices=indices_frame)
         canvas.scene(scene)
         window.show()
+        # input()
