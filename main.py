@@ -7,7 +7,7 @@ import argparse
 if __name__ == '__main__':
     ti.init(arch=ti.cpu)
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--log', default='./init.log')
+    argparser.add_argument('--log', default='./scratch/init.log')
     input_args = argparser.parse_args()
     with open(input_args.log, 'r') as fi:
         lines = fi.readlines()

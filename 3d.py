@@ -74,14 +74,14 @@ if __name__ == '__main__':
     n_max = int(1e4)
 
     dt = 1e-2
-    spring_Y = 10000
+    spring_Y = 1000
     args = {'dim': 3, 'float': ti.f32, 'n_max': n_max, 'dt': dt, 'n': len(pos), 'pos': pos, 'vel': vel, 'mass': mass}
-    # args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .49, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
-    args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .0, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
+    args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .4, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
+    # args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .0, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
     state = toy.solver.ImplicitSolver(args)
 
     # collision = toy.force.Collision({'links': links}, solver=state)
-    elasiticity = toy.force.Elasticity_3d({'vert': tets}, solver=state)
+    elasiticity = toy.force.Elasticity({'vert': tets}, solver=state)
     gravity = toy.force.Gravity({'gravity': [0, -9.8, 0]}, solver=state)
     floor = toy.force.Floor_3d({'k': spring_Y}, solver=state)
 
@@ -100,7 +100,7 @@ if __name__ == '__main__':
     camera.fov(55)
 
     canvas = window.get_canvas()
-    scene = ti.ui.Scene()
+    scene = window.get_scene()
     pause = False
     integration = 'implicit'
     collision = True

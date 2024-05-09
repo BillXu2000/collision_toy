@@ -16,8 +16,13 @@ def run(arr, target):
                 del tmp[min(i, j)]
                 ans = run(tmp + [k], target)
                 if ans:
-                    print(arr)
+                    # print(arr)
                     return True
     return False
 
-run([5, 5, 13, 13], 24)
+for i in range(1, 13):
+    for j in range(1, i + 1):
+        for k in range(1, j + 1):
+            for l in range(1, k + 1):
+                ans = run([i, j, k, l], 24)
+                if not ans: print(i, j, k, l)

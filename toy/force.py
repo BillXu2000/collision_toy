@@ -4,6 +4,8 @@ from . import cg, export
 import math
 
 def loads(args, solver):
+    # name = args['class']
+    # if name == 'Elasticity': name = 'Elasticity_legacy'
     return globals()[args['class']](args, solver)
 
 @ti.func
@@ -207,67 +209,6 @@ class Collision:
                 f[i] += tmp
                 f[j] -= tmp
 
-# legacy
-# @ti.data_oriented
-# class Walls:
-#     def __init__(self, a, b, k, d_m):
-#         a = np.array(a)
-#         n = a.shape[0]
-#         self.n = ti.field(dtype=ti.i32, shape=())
-#         self.a = ti.Vector.field(a.shape[1], dtype=ti.f32, shape=n)
-#         self.b = ti.field(dtype=ti.f32, shape=n)
-#         self.a.from_numpy(a)
-#         self.b.from_numpy(np.array(b))
-#         self.n[None] = n
-#         self.k = k
-#         self.d_m = d_m
-
-#     @ti.kernel
-#     def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
-#         ans = 0.
-#         inf_flag = 0
-#         for i in range(n):
-#             for j in range(self.n[None]):
-#                 d = self.b[j] - self.a[j].dot(x[i])
-#                 if d <= 0: 
-#                     inf_flag = 1
-#                 if 0 < d < self.d_m:
-#                     ans += barrier(d, self.d_m) * self.k
-#         if inf_flag: ans = float('inf')
-#         return ans
-
-#     @ti.kernel
-#     def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
-#         d_m = ti.static(self.d_m)
-#         for i in range(n):
-#             for j in range(self.n[None]):
-#                 d = self.b[j] - self.a[j].dot(x[i])
-#                 assert 0 < d
-#                 if 0 < d < self.d_m:
-#                     dfdd = f_barrier(d, d_m) * self.k
-#                     f[i] += dfdd * (-self.a[j]) # d(d)/dx
-    
-#     @ti.kernel
-#     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
-#         d_m = ti.static(self.d_m)
-#         for i in range(n):
-#             for j in range(self.n[None]):
-#                 d = self.b[j] - self.a[j].dot(x[i])
-#                 assert 0 < d
-#                 if 0 < d < self.d_m:
-#                     ddf = df_barrier(d, d_m) * self.k
-#                     f[i] += ddf * self.a[j] * self.a[j].dot(dx[i])
-    
-#     # @ti.kernel
-#     # def setx0(self, x: ti.template(), n: ti.i32):
-#     #     d_m = ti.static(self.d_m)
-#     #     for i in range(n):
-#     #         for j in range(self.n[None]):
-#     #             d = self.b[j] - self.a[j].dot(x[i])
-#     #             if d < self.d_m:
-#     #                 k = (1 / (-d / self.d_m + 2)) * self.d_m
-#     #                 x[i] += (d - k) * self.a[j]
-
 @ti.data_oriented
 class Gravity:
     def __init__(self, args, solver):
@@ -285,12 +226,14 @@ class Gravity:
     def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
         ans = 0.
         for i in range(n):
+            if self.solver.mass[i] > 1e6: continue
             ans += -x[i].dot(ti.Vector(self.gravity)) * self.solver.mass[i]
         return ans
 
     @ti.kernel
     def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
         for i in range(n):
+            if self.solver.mass[i] > 1e6: continue
             f[i] += self.gravity * self.solver.mass[i]
     
     @ti.kernel
@@ -418,106 +361,16 @@ def ssvd(F):
 def Ds(verts, x):
     return ti.Matrix.cols([x[verts[i]] - x[verts[2]] for i in range(2)])
     
-
 @ti.data_oriented
 class Elasticity:
     def __init__(self, args, solver):
-        Elasticity.arrays = ['vert', 'F_B', 'F_W']
-        tmp = solver.args.copy()
-        tmp.update(args)
-        args = tmp
-
-        k = args['young']
-        nu = args['nu']
-
-        self.m = ti.field(dtype=ti.i32, shape=())
-        self.m_max = args['m_max']
-        self.k = k
-        self.nu = nu
-        self.mu = k / (2 * (1 + nu))
-        self.la = k * nu / ((1 + nu) * (1 - 2 * nu))
-        self.vert = ti.Vector.field(3, dtype=ti.i32, shape=self.m_max)
-        self.F_B = ti.Matrix.field(2, 2, dtype=ti.f32, shape=self.m_max)
-        self.F_W = ti.field(dtype=ti.f32, shape=self.m_max)
-
-        for name in Elasticity.arrays:
-            if name not in args: continue
-            arr = args[name]
-            if isinstance(arr, str):
-                arr = export.b642np(arr)
-            arr = np.array(arr)
-            self.__dict__[name].from_numpy(np.resize(arr, (self.m_max, *arr.shape[1:])))
-            self.m[None] = arr.shape[0]
-    
-    def dumps(self):
-        ans = {'class': 'Elasticity', 'young': self.k, 'nu': self.nu, 'm_max': self.m_max}
-        ans.update([[i, export.np2b64(self.__dict__[i].to_numpy()[:self.m[None]])] for i in Elasticity.arrays])
-        return ans
-    
-    def add(self, vert):
-        m = self.m[None]
-        self.vert[m] = vert
-        self.m[None] = m + 1
-        return m
-    
-    @ti.kernel
-    def init(self, x: ti.template()):
-        for i in range(self.m[None]):
-            verts = self.vert[i]
-            F = Ds(verts, x)
-            self.F_B[i] = F.inverse()
-            self.F_W[i] = ti.abs(F.determinant()) / 2
-    
-    @ti.kernel
-    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
-        ans = 0.
-        for i in range(self.m[None]):
-            verts = self.vert[i]
-            F = Ds(verts, x) @ self.F_B[i]
-            I1 = (F.transpose() @ F).trace()
-            J = F.determinant()
-            ans += self.F_W[i] * (self.mu * (.5 * I1 - 1 - ti.log(J)) + self.la * .5 * ti.log(J)**2) # neohookean
-        return ans
-
-    @ti.kernel
-    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
-        for i in range(self.m[None]):
-            verts = self.vert[i]
-            F = Ds(verts, x) @ self.F_B[i]
-            U, sig, V = ssvd(F)
-            R = U @ V.transpose()
-            J = F.determinant()
-            P = self.mu * (F - F.inverse().transpose()) + self.la * ti.log(J) * F.inverse().transpose()
-            H = -self.F_W[i] * P @ self.F_B[i].transpose()
-            for i in ti.static(range(2)):
-                f[verts[i]] += H[:, i]
-                f[verts[2]] -= H[:, i]
-
-    @ti.kernel
-    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
-        for i in range(self.m[None]):
-            verts = self.vert[i]
-            F = Ds(verts, x) @ self.F_B[i]
-            dD = ti.Matrix.cols([dx[verts[j]] - dx[verts[2]] for j in ti.static(range(2))])
-            dF = dD @ self.F_B[i]
-            Fmt = F.transpose().inverse()
-            J = F.determinant()
-            dP = self.mu * dF + (self.mu - self.la * ti.log(J)) * Fmt @ dF.transpose() @ Fmt + self.la * (F.inverse() @ dF).trace() * Fmt
-            dH = -self.F_W[i] * dP @ self.F_B[i].transpose()
-            for i in ti.static(range(2)):
-                f[verts[i]] += dH[:, i]
-                f[verts[2]] -= dH[:, i]
-
-@ti.data_oriented
-class Elasticity_3d:
-    def __init__(self, args, solver):
-        self.dim = 3
 
         Elasticity.arrays = ['vert', 'F_B', 'F_W']
         tmp = solver.args.copy()
         tmp.update(args)
         args = tmp
 
+        self.dim = args['dim']
         k = args['young']
         nu = args['nu']
 

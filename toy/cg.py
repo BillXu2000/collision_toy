@@ -50,7 +50,7 @@ class newton:
         self.x_1 = gen_field()
         self.export = False
     
-    def newton(self, energy, f, df, x0, ccd = None):
+    def newton(self, energy, f, df, x0, ccd = None): # TODO: reasonable error and termination condition
         dot = self.dot
         ax_by = self.ax_by
 
@@ -72,9 +72,7 @@ class newton:
                 alpha = ccd(pos, dx)
             else:
                 alpha = 1.0
-            # print(alpha)
             if alpha < 1.0: alpha *= 0.9
-            # print(alpha)
             def ene():
                 ax_by(x_1, 1, pos, alpha, dx)
                 ans = energy(x_1)
@@ -115,7 +113,8 @@ class newton:
         r_2 = dot(r, r)
         r_0 = r_2
         n_iter = 20
-        eps = 1e-6 * r_0 # TODO: reasonable epsilon
+        # eps = 1e-6 * r_0 # TODO: reasonable epsilon
+        eps = 1e-12
         if r_0 < 1e-20: return x
         for iter in range(n_iter):
             A(A_p, p)
