@@ -3,6 +3,7 @@ import toy
 import matplotlib.pyplot as plt
 import math
 import meshio
+import sympy
 
 if __name__ == '__main__':
     global vel
@@ -39,7 +40,8 @@ if __name__ == '__main__':
 
         # mesh = meshio.read('./tet.msh')
         # mesh = meshio.read('./oct.msh')
-        mesh = meshio.read('./scratch/bunny1k.msh')
+        # mesh = meshio.read('./scratch/bunny1k.msh')
+        mesh = meshio.read('new.msh')
         cells = dict([(i.type, i.data) for i in mesh.cells])
         pos = mesh.points
         faces = cells['triangle']
@@ -68,25 +70,57 @@ if __name__ == '__main__':
 
     # tets.append(new_tet([0, 1, 0]))
     load_bunny()
+    edges = set()
+    for i in tets:
+        for x in range(4):
+            for y in range(x + 1, 4):
+                edges.add(tuple(sorted((i[x], i[y]))))
+    
+    def get_spring_target():
+        def norm2(x):
+            return sum([i**2 for i in x])**0.5
+        def vector_sympy(name, n):
+            return [sympy.Symbol(name % i) for i in range(n)]
+        x = vector_sympy('x[%d]', 3)
+        k = sympy.Symbol('data.k')
+        l_0 = sympy.Symbol('data.l_0[i]')
+        target = k / 2 * (norm2(x) - l_0)**2 / l_0
+        st = toy.spm.target2ti(target)
+        with open('output.py', 'w') as fi: # TODO : hack
+            fi.write(st)
+        import output
+        return output.__sympy_target_pm__
+
+    vol_tot = 0.0
+    for tet in tets:
+        diff = [pos[tet[i]] - pos[tet[0]] for i in range(1, 4)]
+        volume = np.linalg.det(np.array(diff)) / 6
+        vol_tot += volume
 
     ti.init(arch=ti.cpu)
 
     n_max = int(1e4)
 
     dt = 1e-2
-    spring_Y = 1000
+    young = 10000
+    density = 1000
     args = {'dim': 3, 'float': ti.f32, 'n_max': n_max, 'dt': dt, 'n': len(pos), 'pos': pos, 'vel': vel, 'mass': mass}
-    args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .4, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
+    args.update({'k_collision': young, 'd_m': 1e-2, 'nu': .4, 'young': young, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
     # args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .0, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
     state = toy.solver.ImplicitSolver(args)
 
     # collision = toy.force.Collision({'links': links}, solver=state)
-    elasiticity = toy.force.Elasticity({'vert': tets}, solver=state)
+    # elasiticity = toy.force.Elasticity({'vert': tets}, solver=state)
     gravity = toy.force.Gravity({'gravity': [0, -9.8, 0]}, solver=state)
-    floor = toy.force.Floor_3d({'k': spring_Y}, solver=state)
+    floor = toy.force.Floor_3d({'k': young}, solver=state)
+    spring = toy.force.Spring_sympy({'vert': edges, 'target': get_spring_target()}, solver=state)
 
-    state.add_forces([elasiticity, gravity, floor])
-    elasiticity.init(state.pos, state.mass)
+
+    # state.add_forces([elasiticity, gravity, floor])
+    # elasiticity.init(state.pos, state.mass)
+    state.add_forces([spring, gravity, floor])
+
+    spring.init(state.pos)
 
     state.mass.fill(1 / len(pos)) # TODO : mass hack
 

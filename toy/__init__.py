@@ -1,6 +1,7 @@
 from .gui import run
 from . import force, solver
 import numpy as np
+from . import sympy_pearlmutter as spm
 
 class State:
     def __init__(self):

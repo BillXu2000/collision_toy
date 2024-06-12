@@ -1,6 +1,6 @@
 import taichi as ti
 import numpy as np, json
-from . import cg, export
+from . import cg, export, poly
 import math
 
 def loads(args, solver):
@@ -210,6 +210,156 @@ class Collision:
                 f[j] -= tmp
 
 @ti.data_oriented
+class Collision_3d: # TODO: wip
+    def __init__(self, args, solver):
+        tmp = solver.args.copy()
+        tmp.update(args)
+        args = tmp
+
+        self.n = solver.n
+        self.k = args['k_collision']
+        self.d_m = args['d_m']
+        self.dim = args['dim']
+        m_max = args['m_max']
+
+        faces = args['faces']
+        if isinstance(faces, str):
+            faces = export.b642np(faces)
+        faces = np.array(faces)
+        self.faces = ti.Vector.field(self.dim, dtype=ti.i32, shape=m_max)
+        self.faces.from_numpy(np.resize(faces, (m_max, self.dim)))
+        self.m = ti.field(dtype=ti.i32, shape=())
+        self.m[None] = faces.shape[0]
+    
+    def dumps(self):
+        return {'class': 'Collision', 'links': export.np2b64(self.vert.to_numpy()[:self.m[None]]), 'k_collision': self.k, 'd_m': self.d_m, 'm_max': self.m[None]}
+    
+    @ti.func
+    def in_triangle(self, x_v, x_face) -> ti.i32:
+        diff = ti.Vector.zero(ti.f32, self.dim)
+        for i in ti.static(range(self.dim)):
+            diff[i] = x_face[i] - x_v
+        cross = ti.Vector.zero(ti.f32, self.dim)
+        for i in ti.static(range(self.dim)):
+            cross[i] = diff[i].cross(diff[(i + 1) % self.dim])
+        return cross[0].dot(cross[1]) * cross[0].dot(cross[2]) >= 0
+    
+    @ti.func
+    def check_vf(self, i, face, t, x, dx) -> ti.i32:
+        x_face = ti.Vector.zero(ti.f32, self.dim)
+        for i in ti.static(range(self.dim)):
+            x_face[i] = x[face[i]] + dx[face[i]] * t
+        return self.in_triangle(x[i] + dx[i] * t, x_face)
+    
+    @ti.func
+    def vf_collision_test(self, i, face, x) -> ti.f32:
+        norm = (x[face[1]] - x[face[0]]).cross(x[face[2]] - x[face[0]]).normalized()
+        dist = (x[i] - x[face[0]]).dot(norm)
+        if abs(dist) > self.d_m: return -1
+        x_plane = x[i] - dist * norm
+        x_face = ti.Vector.zero(ti.f32, self.dim)
+        for i in ti.static(range(self.dim)):
+            x_face[i] = x[face[i]]
+        flag = self.in_triangle(x_plane, x_face)
+        if not flag: return -1
+        return abs(dist)
+    
+    @ti.kernel
+    def ccd(self, x: ti.template(), dx: ti.template()) -> ti.f32:
+        alpha = 1.0
+        dim = self.dim
+        for i in range(self.n[None]):
+            for j in range(self.m[None]):
+                face = self.faces[j]
+                flag_unique = True
+                for k in ti.static(range(dim)):
+                    if face[k] == i: flag_unique = False
+                if not flag_unique: continue
+                a = ti.Vector([0] * dim, dt=ti.f32)
+                for k in ti.static(range(2**dim)):
+                    s = 0
+                    m_d = ti.Matrix.zero(ti.f32, dim, dim)
+                    for u in ti.static(range(dim)):
+                        tmp = (k >> u) & 1
+                        s += tmp
+                        if tmp:
+                            m_d[u, :] = dx[face[u]] - dx[i]
+                        else:
+                            m_d[u, :] = x[face[u]] - x[i]
+                    a[s] += m_d.determinant()
+                if a[0] == 0: continue
+                assert dim == 3 # TODO: temporary 3d hack
+                n_root, roots = poly.solve_cubic_ranged(a, 0, 1) # TODO: temporary 3d hack
+                if n_root == 0: continue
+                for k in range(n_root):
+                    if self.check_vf(i, face, roots[k], x, dx): 
+                        ti.atomic_min(alpha, roots[k])
+                        break
+        return alpha
+
+    @ti.kernel
+    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
+        dm = ti.static(self.d_m)
+        ans = .0
+        for i in range(self.n[None]):
+            for j in range(self.m[None]):
+                d = self.vf_collision_test(i, self.faces[j], x)
+                if d > -1:
+                    ans += barrier(d, dm) * self.k
+        return ans
+
+    @ti.kernel
+    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
+        dm = ti.static(self.d_m)
+        for i in range(n):
+            for j in range(self.m[None]):
+                face = self.faces[j]
+                d = self.vf_collision_test(i, face, x)
+                if d < 0: continue
+                norm = (x[face[1]] - x[face[0]]).cross(x[face[2]] - x[face[0]]).normalized()
+                dist = (x[i] - x[face[0]]).dot(norm)
+                for k in ti.static(range(3)):
+                    dfdd = f_barrier(d, dm) * self.k
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                    f[v[(k + 2) % 3]] += dfdd * dddx
+    
+    @ti.kernel
+    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
+        verts = ti.static(self.vert)
+        dm = ti.static(self.d_m)
+        for i in range(n):
+            for j in range(self.m[None]):
+                v = ti.Vector([-1, -1, -1], dt=ti.i32)
+                d = 0.
+                if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 0: continue
+                length = (x[verts[j][0]] - x[verts[j][1]]).norm()
+                for k in ti.static(range(3)):
+                    dfdd = f_barrier(d, dm) * self.k
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (dx[v[(k + 1) % 3]] - dx[v[k]]) / length
+                    f[v[(k + 2) % 3]] += dfdd * dddx
+                s = 0.
+                for k in ti.static(range(3)):
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                    s += dddx.dot(dx[v[(k + 2) % 3]])
+                for k in ti.static(range(3)):
+                    dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                    ddf = df_barrier(d, dm) * self.k
+                    f[v[(k + 2) % 3]] += ddf * dddx * s
+        for i in range(self.n[None]):
+            for j in range(i):
+                xij = x[i] - x[j]
+                d = xij.norm()
+                if xij.norm() > dm: continue
+                ddf = df_barrier(d, dm) * self.k
+                dddx = xij * xij.dot(dx[i] - dx[j])
+                tmp = ddf * dddx
+                dfdd = f_barrier(d, dm) * self.k
+                ddd = (ti.Matrix.identity(ti.f32, 2) - xij.outer_product(xij) / xij.norm_sqr()) @ (dx[i] - dx[j]) / d
+                tmp += dfdd * ddd
+                f[i] += tmp
+                f[j] -= tmp
+
+@ti.data_oriented
 class Gravity:
     def __init__(self, args, solver):
         tmp = solver.args.copy()
@@ -239,6 +389,55 @@ class Gravity:
     @ti.kernel
     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
         pass
+
+@ti.data_oriented
+class Spring_sympy:
+    def __init__(self, args, solver):
+        tmp = solver.args.copy()
+        tmp.update(args)
+        args = tmp
+
+        self.m = ti.field(dtype=ti.i32, shape=())
+        self.m_max = args['m_max']
+        self.k = args['young']
+        self.vert = ti.Vector.field(2, dtype=ti.i32, shape=self.m_max)
+        self.l_0 = ti.field(dtype=ti.f32, shape=self.m_max)
+        self.target = args['target']
+
+        self.m[None] = len(args['vert'])
+        self.vert.from_numpy(np.resize(np.array(list(args['vert'])), (self.m_max, 2)))
+    
+    @ti.kernel
+    def init(self, x: ti.template()):
+        for i in range(self.m[None]):
+            self.l_0[i] = (x[self.vert[i][0]] - x[self.vert[i][1]]).norm()
+    
+    @ti.kernel
+    def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
+        ans = 0.
+        for i in range(self.m[None]):
+            v = self.vert[i]
+            xuv = x[v.x] - x[v.y]
+            ans += self.target.f(self, i, xuv)
+        return ans
+
+    @ti.kernel
+    def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
+        for i in range(self.m[None]):
+            v = self.vert[i]
+            xuv = x[v.x] - x[v.y]
+            ans = -self.target.df(self, i, xuv)
+            f[v.x] += ans
+            f[v.y] -= ans
+
+    @ti.kernel
+    def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
+        for i in range(self.m[None]):
+            v = self.vert[i]
+            xuv = x[v.x] - x[v.y]
+            ans = -self.target.ddf(self, i, xuv, dx[v.x] - dx[v.y])
+            f[v.x] += ans
+            f[v.y] -= ans
 
 @ti.data_oriented
 class Springs:
