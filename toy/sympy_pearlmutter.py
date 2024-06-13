@@ -51,23 +51,21 @@ def sympy2str(f):
 def target2ti(target):
     ti_template = '''
 import taichi as ti
-@ti.data_oriented
-class __sympy_target_pm__:
-    @ti.func
-    def f(data, i, x):
+@ti.func
+def f(data, i, x):
 #replacef
 
-    @ti.func
-    def df(data, i, x):
+@ti.func
+def df(data, i, x):
 #replacedf
 
-    @ti.func
-    def ddf(data, i, x, dx):
+@ti.func
+def ddf(data, i, x, dx):
 #replaceddf
 '''
     df, ddf = pearlmutter_sympy(target)
     vars = getvars(target)
-    indent = ' ' * 8
+    indent = ' ' * 4
     output = ti_template
     output = output.replace('#replacef', f'{indent}return {target}')
     # print(output)

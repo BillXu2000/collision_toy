@@ -47,6 +47,14 @@ if __name__ == '__main__':
         faces = cells['triangle']
         tets = cells['tetra'][:]
 
+        def add_mesh():
+            global faces, tets, pos
+            faces = np.array(list(faces) + list(cells['triangle'] + len(pos)))
+            tets = np.array(list(tets) + list(cells['tetra'][:] + len(pos)))
+            pos = np.array(list(pos) + list(mesh.points + [1, 1.1, 1.01]))
+        
+        add_mesh()
+
         pos[:, 1] += 2.5
         pos *= .3
         vel = np.array(pos)
@@ -84,12 +92,19 @@ if __name__ == '__main__':
         x = vector_sympy('x[%d]', 3)
         k = sympy.Symbol('data.k')
         l_0 = sympy.Symbol('data.l_0[i]')
-        target = k / 2 * (norm2(x) - l_0)**2 / l_0
+        target = k / 2 * (norm2(x) - l_0)**2 * l_0
         st = toy.spm.target2ti(target)
-        with open('output.py', 'w') as fi: # TODO : hack
-            fi.write(st)
-        import output
-        return output.__sympy_target_pm__
+        return toy.string2module(st)
+    
+    def get_vf_target():
+        def vector_sympy(name, n):
+            return sympy.Matrix([sympy.Symbol(name % i) for i in range(n)])
+        x = vector_sympy('x[0, %d]', 3)
+        y = vector_sympy('x[1, %d]', 3)
+        z = vector_sympy('x[2, %d]', 3)
+        target = x.dot(y.cross(z))
+        st = toy.spm.target2ti(target)
+        return toy.string2module(st)
 
     vol_tot = 0.0
     for tet in tets:
@@ -102,23 +117,25 @@ if __name__ == '__main__':
     n_max = int(1e4)
 
     dt = 1e-2
-    young = 10000
+    young = 1e4
     density = 1000
     args = {'dim': 3, 'float': ti.f32, 'n_max': n_max, 'dt': dt, 'n': len(pos), 'pos': pos, 'vel': vel, 'mass': mass}
     args.update({'k_collision': young, 'd_m': 1e-2, 'nu': .4, 'young': young, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
     # args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .0, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
     state = toy.solver.ImplicitSolver(args)
+    print(args['n'])
 
     # collision = toy.force.Collision({'links': links}, solver=state)
     # elasiticity = toy.force.Elasticity({'vert': tets}, solver=state)
     gravity = toy.force.Gravity({'gravity': [0, -9.8, 0]}, solver=state)
     floor = toy.force.Floor_3d({'k': young}, solver=state)
     spring = toy.force.Spring_sympy({'vert': edges, 'target': get_spring_target()}, solver=state)
+    collision = toy.force.Collision_sympy({'faces': faces, 'target': get_vf_target()}, solver=state)
 
 
     # state.add_forces([elasiticity, gravity, floor])
     # elasiticity.init(state.pos, state.mass)
-    state.add_forces([spring, gravity, floor])
+    state.add_forces([spring, gravity, floor, collision])
 
     spring.init(state.pos)
 
