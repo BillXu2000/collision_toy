@@ -41,21 +41,24 @@ if __name__ == '__main__':
         # mesh = meshio.read('./tet.msh')
         # mesh = meshio.read('./oct.msh')
         # mesh = meshio.read('./scratch/bunny1k.msh')
-        mesh = meshio.read('new.msh')
+        mesh = meshio.read('./scratch/new.msh')
         cells = dict([(i.type, i.data) for i in mesh.cells])
         pos = mesh.points
         faces = cells['triangle']
         tets = cells['tetra'][:]
 
-        def add_mesh():
+
+
+        def add_mesh(offset):
             global faces, tets, pos
             faces = np.array(list(faces) + list(cells['triangle'] + len(pos)))
             tets = np.array(list(tets) + list(cells['tetra'][:] + len(pos)))
-            pos = np.array(list(pos) + list(mesh.points + [1, 1.1, 1.01]))
+            pos = np.array(list(pos) + list(mesh.points + offset))
         
-        add_mesh()
+        add_mesh([.9, 1.5, .9])
+        # add_mesh([.8, 2.6, .8])
 
-        pos[:, 1] += 2.5
+        pos[:, 1] -= pos[:, 1].min()
         pos *= .3
         vel = np.array(pos)
         vel *= 0
@@ -123,10 +126,10 @@ if __name__ == '__main__':
     args.update({'k_collision': young, 'd_m': 1e-2, 'nu': .4, 'young': young, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
     # args.update({'k_collision': spring_Y, 'd_m': 1e-2, 'nu': .0, 'young': spring_Y, 'm_max': n_max, 'forces': [], 'gravity': [0, -9.8, 0]})
     state = toy.solver.ImplicitSolver(args)
-    print(args['n'])
+    # print(args['n'])
 
     # collision = toy.force.Collision({'links': links}, solver=state)
-    # elasiticity = toy.force.Elasticity({'vert': tets}, solver=state)
+    elasiticity = toy.force.Elasticity({'vert': tets}, solver=state)
     gravity = toy.force.Gravity({'gravity': [0, -9.8, 0]}, solver=state)
     floor = toy.force.Floor_3d({'k': young}, solver=state)
     spring = toy.force.Spring_sympy({'vert': edges, 'target': get_spring_target()}, solver=state)
@@ -134,8 +137,8 @@ if __name__ == '__main__':
 
 
     # state.add_forces([elasiticity, gravity, floor])
-    # elasiticity.init(state.pos, state.mass)
     state.add_forces([spring, gravity, floor, collision])
+    elasiticity.init(state.pos, state.mass)
 
     spring.init(state.pos)
 
@@ -154,7 +157,6 @@ if __name__ == '__main__':
     scene = window.get_scene()
     pause = False
     integration = 'implicit'
-    collision = True
 
     indices = ti.field(dtype=ti.i32, shape=(len(faces) * 3))
     indices.from_numpy(np.array(faces).reshape(-1))
@@ -169,7 +171,15 @@ if __name__ == '__main__':
     # print(indices_list)
     indices_frame.from_numpy(np.array(indices_list).reshape(-1))
 
+    debug_force = ti.Vector.field(3, dtype=ti.f32, shape=(n_max))
+    debug_pos = ti.Vector.field(3, dtype=ti.f32, shape=(n_max))
 
+    @ti.kernel
+    def get_debug_pos():
+        for i in range(state.n[None]):
+            debug_pos[i] = state.pos[i] + debug_force[i] / state.mass[i] * state.dt[None]
+
+    n_stop = 1
     while window.running:
         camera.track_user_inputs(window, movement_speed=0.1, hold_key=ti.ui.RMB)
         scene.set_camera(camera)
@@ -182,8 +192,10 @@ if __name__ == '__main__':
             if event.key in [ti.ui.ESCAPE]:
                 window.running = False
             if event.key in [' ']:
-                pause = not pause
-
+                n_stop = -n_stop - 1
+            if event.key in ['n']:
+                n_stop = 1
+        
         # if window.GUI.checkbox('implicit', integration == 'implicit'):
         #     integration = 'implicit'
         # else:
@@ -193,11 +205,19 @@ if __name__ == '__main__':
         #     collision = True
         # else:
         #     collision = False
+
+        if n_stop != 0:
+            state.substep()
+            if n_stop > 0: n_stop -= 1
         
-        state.substep()
+        debug_force.fill(0)
+        collision.force(debug_force, state.pos, state.n[None])
+        get_debug_pos()
 
         scene.mesh(vertices=state.pos, indices=indices)
         scene.lines(vertices=x_frame, width=1, indices=indices_frame)
+        scene.particles(centers=state.pos, radius=0.01, color=(0.6, 0, 0), index_count=state.n[None])
+        scene.particles(centers=debug_pos, radius=0.01, color=(0, 0.6, 0), index_count=state.n[None])
         canvas.scene(scene)
         window.show()
         # input()

@@ -248,7 +248,7 @@ class Collision_sympy: # TODO: wip, vf only
         cross = ti.Matrix.zero(ti.f32, self.dim, self.dim)
         for i in ti.static(range(self.dim)):
             cross[i, :] = diff[i, :].cross(diff[(i + 1) % self.dim, :])
-        return cross[0, :].dot(cross[1, :]) * cross[0, :].dot(cross[2, :]) >= 0
+        return cross[0, :].dot(cross[1, :]) > 0 and cross[1, :].dot(cross[2, :]) > 0
     
     @ti.func
     def check_vf(self, i, face, t, x, dx) -> ti.i32:
@@ -259,17 +259,21 @@ class Collision_sympy: # TODO: wip, vf only
     
     @ti.func
     def vf_collision_test(self, i, face, x) -> ti.f32:
-        norm = (x[face[1]] - x[face[0]]).cross(x[face[2]] - x[face[0]]).normalized()
-        dist = (x[i] - x[face[0]]).dot(norm)
-        ans = -1
-        if abs(dist) <= self.d_m:
-            x_plane = x[i] - dist * norm
-            x_face = ti.Matrix.zero(ti.f32, self.dim, self.dim)
-            for i in ti.static(range(self.dim)):
-                x_face[i, :] = x[face[i]]
-            flag = self.in_triangle(x_plane, x_face)
-            ans = abs(dist)
-            if not flag: ans = -1
+        ans = -1.0
+        if i == face[0] or i == face[1] or i == face[2]:
+            pass
+        else:
+            norm = (x[face[1]] - x[face[0]]).cross(x[face[2]] - x[face[0]]).normalized()
+            dist = (x[i] - x[face[0]]).dot(norm)
+            
+            if abs(dist) <= self.d_m:
+                x_plane = x[i] - dist * norm
+                x_face = ti.Matrix.zero(ti.f32, self.dim, self.dim)
+                for i in ti.static(range(self.dim)):
+                    x_face[i, :] = x[face[i]]
+                flag = self.in_triangle(x_plane, x_face)
+                if flag:
+                    ans = abs(dist)
         return ans
     
     @ti.kernel
@@ -310,77 +314,94 @@ class Collision_sympy: # TODO: wip, vf only
     def energy(self, x: ti.template(), n: ti.i32) -> ti.f32:
         dm = ti.static(self.d_m)
         ans = .0
-        # for i in range(self.n[None]):
-        #     for j in range(self.m[None]):
-        #         d = self.vf_collision_test(i, self.faces[j], x)
-        #         if d > -1:
-        #             ans += barrier(d, dm) * self.k
         for i in range(self.n[None]):
-            for j in range(i):
-                d = x[i] - x[j]
-                if d.norm() > dm: continue
-                ans += barrier(d.norm(), dm) * self.k
+            for j in range(self.m[None]):
+                d = self.vf_collision_test(i, self.faces[j], x)
+                if d > -1:
+                    ans += barrier(d, dm) * self.k
+        # for i in range(self.n[None]):
+        #     for j in range(i):
+        #         d = x[i] - x[j]
+        #         if d.norm() > dm: continue
+        #         ans += barrier(d.norm(), dm) * self.k
         return ans
-
+    
     @ti.kernel
     def force(self, f: ti.template(), x: ti.template(), n: ti.i32):
         dm = ti.static(self.d_m)
-        # for i in range(n):
-        #     for j in range(self.m[None]):
-        #         face = self.faces[j]
-        #         d = self.vf_collision_test(i, face, x)
-        #         if d < 0: continue
-        #         verts = ti.static([i, face[0], face[1], face[2]])
-        #         df = self.target.df(self, j, ti.Matrix.rows(ti.static([x[verts[z]] - x[face[3]] for z in range(3)])))
-        #         df *= f_barrier(d, dm)
-        #         for z in ti.static(range(3)):
-        #             f[verts[z]] += df[z, :]
-        #             f[verts[3]] -= df[z, :]
+        for i in range(n):
+            for j in range(self.m[None]):
+                face = self.faces[j]
+                d = self.vf_collision_test(i, face, x)
+                if d < 0: continue
+                verts = ti.Vector([i, face[0], face[1], face[2]])
+                xs = ti.Matrix.rows([x[verts[z]] - x[verts[3]] for z in range(3)])
+                df = self.target.df(self, j, xs)
+                df *= f_barrier(d, dm) * self.k
+                for z in ti.static(range(3)):
+                    f[verts[z]] += df[z, :]
+                    f[verts[3]] -= df[z, :]
+
                 # norm = (x[face[1]] - x[face[0]]).cross(x[face[2]] - x[face[0]]).normalized()
                 # dist = (x[i] - x[face[0]]).dot(norm)
                 # for k in ti.static(range(3)):
                 #     dfdd = f_barrier(d, dm) * self.k
                 #     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
                 #     f[v[(k + 2) % 3]] += dfdd * dddx
-        for i in range(self.n[None]):
-            for j in range(i):
-                d = x[i] - x[j]
-                if d.norm() > dm: continue
-                force = f_barrier(d.norm(), dm) * self.k * d.normalized()
-                f[i] += force
-                f[j] -= force
+        # for i in range(self.n[None]):
+        #     for j in range(i):
+        #         d = x[i] - x[j]
+        #         if d.norm() > dm: continue
+        #         force = f_barrier(d.norm(), dm) * self.k * d.normalized()
+        #         f[i] += force
+        #         f[j] -= force
     
     @ti.kernel
     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
         # verts = ti.static(self.vert)
         dm = ti.static(self.d_m)
-        # for i in range(n):
-        #     for j in range(self.m[None]):
-        #         v = ti.Vector([-1, -1, -1], dt=ti.i32)
-        #         d = 0.
-        #         if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 0: continue
-        #         length = (x[verts[j][0]] - x[verts[j][1]]).norm()
-        #         for k in ti.static(range(3)):
-        #             dfdd = f_barrier(d, dm) * self.k
-        #             dddx = ti.Matrix([[0, -1], [1, 0]]) @ (dx[v[(k + 1) % 3]] - dx[v[k]]) / length
-        #             f[v[(k + 2) % 3]] += dfdd * dddx
-        #         s = 0.
-        #         for k in ti.static(range(3)):
-        #             dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
-        #             s += dddx.dot(dx[v[(k + 2) % 3]])
-        #         for k in ti.static(range(3)):
-        #             dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
-        #             ddf = df_barrier(d, dm) * self.k
-        #             f[v[(k + 2) % 3]] += ddf * dddx * s
-        for i in range(self.n[None]):
-            for j in range(i):
-                d = x[i] - x[j]
-                if d.norm() > dm: continue
-                dd = dx[i] - dx[j]
-                force = df_barrier(d.norm(), dm) * self.k * d.normalized() * d.normalized().dot(dd)
-                force += f_barrier(d.norm(), dm) * self.k * (dd - d * d.dot(dd) / d.norm_sqr()) / d.norm()
-                f[i] += force
-                f[j] -= force
+        for i in range(n):
+            for j in range(self.m[None]):
+                face = self.faces[j]
+                d = self.vf_collision_test(i, face, x)
+                if d < 0: continue
+                
+                # sympy
+                verts = ti.Vector([i, face[0], face[1], face[2]])
+                xs = ti.Matrix.rows([x[verts[z]] - x[verts[3]] for z in range(3)])
+                dxs = ti.Matrix.rows([dx[verts[z]] - dx[verts[3]] for z in range(3)])
+                df = self.target.df(self, j, xs)
+                ddf = self.target.ddf(self, j, xs, dxs)
+                s = 0.0
+                for k in ti.static(range(self.dim)):
+                    s += df[k, :].dot(dxs[k, :])
+                ans = (df_barrier(d, dm) * s * dxs + f_barrier(d, dm) * ddf) * self.k
+                for k in ti.static(range(self.dim)):
+                    f[verts[k]] += ans[k, :]
+                    f[verts[3]] -= ans[k, :]
+
+                # length = (x[face[0]] - x[face[1]]).norm()
+                # for k in ti.static(range(3)):
+                #     dfdd = f_barrier(d, dm) * self.k
+                #     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (dx[v[(k + 1) % 3]] - dx[v[k]]) / length
+                #     f[v[(k + 2) % 3]] += dfdd * dddx
+                # s = 0.
+                # for k in ti.static(range(3)):
+                #     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                #     s += dddx.dot(dx[v[(k + 2) % 3]])
+                # for k in ti.static(range(3)):
+                #     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
+                #     ddf = df_barrier(d, dm) * self.k
+                #     f[v[(k + 2) % 3]] += ddf * dddx * s
+        # for i in range(self.n[None]):
+        #     for j in range(i):
+        #         d = x[i] - x[j]
+        #         if d.norm() > dm: continue
+        #         dd = dx[i] - dx[j]
+        #         force = df_barrier(d.norm(), dm) * self.k * d.normalized() * d.normalized().dot(dd)
+        #         force += f_barrier(d.norm(), dm) * self.k * (dd - d * d.dot(dd) / d.norm_sqr()) / d.norm()
+        #         f[i] += force
+        #         f[j] -= force
 
                 # xij = x[i] - x[j]
                 # d = xij.norm()

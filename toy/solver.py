@@ -28,7 +28,8 @@ class ImplicitSolver:
                 np_arr = np.array(args[name])
                 assert len(np_arr.shape) == 2
                 assert np_arr.shape[1] == ans.n
-                np_arr.resize((ans.shape + (ans.n,)))
+                np_arr = np.resize(np_arr, ans.shape + (ans.n,))
+                # np_arr.resize((ans.shape + (ans.n,)))
                 ans.from_numpy(np_arr)
             return ans
         self.pos = gen('pos')
