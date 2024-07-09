@@ -1,55 +1,122 @@
 import taichi as ti
 import numpy as np
 import json
+import meshio
+import re
 from . import cg, export, force
+
+def load_mesh(fn):
+    mesh = meshio.read(fn)
+    cells = dict([(i.type, i.data) for i in mesh.cells])
+    pos = mesh.points
+    faces = cells['triangle']
+    tets = cells['tetra']
+    return {'points': pos, 'faces': faces, 'tets': tets}
 
 @ti.data_oriented
 class ImplicitSolver:
-    def __init__(self, args):
-        self.args = args
-        for i in args:
-            k = args[i]
-            if isinstance(k, str):
-                args[i] = export.b642np(k)
-        self.dim = args['dim']
-        self.n_max = args['n_max']
+    def __init__(self):
+        self.dt = -1
+        self.points = []
+        self.faces = []
+        self.tets = []
+        self.fixed = []
+        self.forces = []
+        self.n_max = -1
+        self.dim = -1
+    
+    def load_config_file(self, fn):
+        def get_numbers(l, t=float):
+            return [t(i) for i in re.findall(r'[+\-\d\.e]+', ','.join(l))]
+        with open(fn, 'r') as fi:
+            lines = fi.readlines()
+        for line in lines:
+            splits = line.split()
+            if len(splits) == 0: continue
+            if splits[0][0] == '#': continue
+            if splits[0] == 'dim':
+                self.dim = int(splits[1])
+            elif splits[0] == 'n_max':
+                self.n_max = int(splits[1])
+            elif splits[0] == 'dt':
+                self.dt = float(splits[1])
+            elif splits[0] == 'mesh':
+                flag_fixed = False
+                if splits[1] == 'fixed':
+                    del splits[1]
+                    flag_fixed = True
+                mesh = load_mesh(splits[1])
+                if 'faces' in mesh:
+                    self.faces.extend((np.array(mesh['faces']) + len(self.points)).tolist())
+                if 'tets' in mesh:
+                    self.tets.extend((np.array(mesh['tets']) + len(self.points)).tolist())
+                points = np.array(mesh['points'])
+                if len(splits) > 2:
+                    trans = get_numbers(splits[2:], float)
+                    if len(trans) <= 3:
+                        points = points + np.array(trans)
+                    else:
+                        m_tmp = round(len(trans)**.5)
+                        assert m_tmp**2 == len(trans)
+                        trans = np.array(trans).reshape(m_tmp, m_tmp)
+                        for i, point in enumerate(points):
+                            points[i] = trans @ np.concatenate([point, [1]])
+                if flag_fixed:
+                    self.fixed.extend(list(range(len(self.points), len(self.points) + len(points))))
+                self.points.extend(points.tolist())
+            elif splits[0] == 'point':
+                p = get_numbers(splits[1:], int)
+                self.points.append(p)
+            elif splits[0] == 'fixed':
+                verts = get_numbers(splits[1:], int)
+                self.fixed.extend(verts + len(self.points))
+            elif splits[0] in force.mapping:
+                self.forces.append(force.mapping[splits[0]](json.loads(' '.join(splits[1:]))))
+            else: # arbitary parameters
+                self.args[splits[0]] = json.loads(' '.join(splits[1:]))
+    
+    def init(self):
+        if self.n_max == -1: self.n_max = len(self.points)
+        assert self.dim >= 0
 
-        self.dt = ti.field(ti.f32, shape=())
-        if 'dt' in args:
-            self.dt[None] = args['dt']
-        self.n = ti.field(ti.i32, shape=())
-        if 'n' in args:
-            self.n[None] = args['n']
-        self.gen_field = lambda: ti.Vector.field(self.dim, dtype=ti.f32, shape=self.n_max)
-
-        def gen(name):
-            ans = self.gen_field()
-            if name in args:
-                np_arr = np.array(args[name])
-                assert len(np_arr.shape) == 2
-                assert np_arr.shape[1] == ans.n
-                np_arr = np.resize(np_arr, ans.shape + (ans.n,))
-                # np_arr.resize((ans.shape + (ans.n,)))
-                ans.from_numpy(np_arr)
+        def to_field(v, type):
+            ans = ti.field(type, shape=())
+            ans[None] = v
             return ans
-        self.pos = gen('pos')
-        self.vel = gen('vel')
+        self.dt = to_field(self.dt, ti.f32)
+        self.n = to_field(len(self.points), ti.i32)
+
+        density = 1e3 # TODO: variable density
+        self.mass = [0] * len(self.points)
+        for tet in self.tets:
+            p = np.array(self.points)[tet]
+            v = np.linalg.det(p[1:] - p[0]) / 6
+            for i in range(4):
+                self.mass[tet[i]] += v * density
+        for i in self.fixed:
+            self.mass[i] = -1
+
+        self.gen_field = lambda: ti.Vector.field(self.dim, dtype=ti.f32, shape=self.n_max)
+        def gen(np_arr):
+            ans = self.gen_field()
+            assert len(np_arr.shape) == 2
+            assert np_arr.shape[1] == ans.n
+            np_arr = np.resize(np_arr, ans.shape + (ans.n,))
+            ans.from_numpy(np_arr)
+            return ans
+        
+        self.pos = gen(np.array(self.points))
+        self.vel = gen(np.array([[0.] * self.dim]))
+        mass_np = self.mass
         self.mass = ti.field(ti.f32, shape=self.n_max)
-        if 'mass' in args:
-            np_arr = np.array(args['mass'])
-            assert len(np_arr.shape) == 1
-            self.mass.from_numpy(np.resize(np_arr, self.mass.shape))
+        self.mass.from_numpy(np.resize(mass_np, self.n_max))
 
         self.newton = cg.newton(self.n, self.gen_field)
         self.ans = self.newton.pos
-        self.forces = []
 
-        for i in args['forces']:
-            self.forces.append(force.loads(i, self))
-    
-    def add_forces(self, forces):
-        self.forces += forces
-    
+        for force in self.forces:
+            force.init(self)
+
     def load_xv(self, args):
         def load(name):
             field = self.__dict__[name]
@@ -70,12 +137,13 @@ class ImplicitSolver:
         constants = ['dim', 'n_max']
         ans.update([[i, self.__dict__[i]] for i in constants])
         arrays = ['pos', 'vel', 'mass']
-        ans.update([[i, export.np2b64(self.__dict__[i].to_numpy()[:self.n[None]])] for i in arrays])
+        # ans.update([[i, export.np2b64(self.__dict__[i].to_numpy()[:self.n[None]])] for i in arrays])
+        ans.update([[i, self.__dict__[i].to_numpy()[:self.n[None]]] for i in arrays])
         vars = ['dt', 'n']
         ans.update([[i, self.__dict__[i][None]] for i in vars])
-        ans['forces'] = []
-        for i in self.forces:
-            ans['forces'].append(i.dumps())
+        # ans['forces'] = []
+        # for i in self.forces:
+        #     ans['forces'].append(i.dumps())
         return ans
     
     def update(self, args):
@@ -116,6 +184,7 @@ class ImplicitSolver:
         n = self.n[None]
         dt = self.dt[None]
         for i in range(n):
+            if self.mass[i] == -1: continue
             target = self.pos[i] + dt * self.vel[i]
             energy += .5 * (x[i] - target).norm_sqr() * self.mass[i]
         return energy
@@ -132,6 +201,9 @@ class ImplicitSolver:
         n = self.n[None]
         dt = self.dt[None]
         for i in range(n):
+            if self.mass[i] == -1: 
+                de[i] = 0
+                continue
             target = self.pos[i] + dt * self.vel[i]
             de[i] = (x[i] - target) * self.mass[i] - dt**2 * de[i]
 
@@ -146,7 +218,11 @@ class ImplicitSolver:
         n = self.n[None]
         dt = self.dt[None]
         for i in range(n):
-            dde[i] = self.mass[i] * dx[i] - dt**2 * dde[i]
+            if self.mass[i] == -1: 
+                dde[i] = 0
+                continue
+            # dde[i] = self.mass[i] * dx[i] - dt**2 * dde[i]
+            dde[i] = self.mass[i] * dx[i]
     
     def hessian(self, dde, x, dx):
         dde.fill(0)

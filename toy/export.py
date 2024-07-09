@@ -12,6 +12,7 @@ class __Exporter:
     def __init__(self):
         self.fn = './log/' + '%.3f' % time.time() + '.log'
         self.i_f = -1
+        self.newton = {}
 
     def set_i_f(self, i_f):
         self.i_f = i_f
@@ -24,5 +25,12 @@ class __Exporter:
         d['i_f'] = self.i_f
         with open(self.fn, 'a') as fi:
             fi.write(json.dumps(d) + '\n')
+    
+    def record(self, d):
+        assert isinstance(d, dict)
+        i_n = d['i_n']
+        if self.i_f not in self.newton:
+            self.newton[self.i_f] = {}
+        self.newton[self.i_f][i_n] = d
 
 exporter = __Exporter()

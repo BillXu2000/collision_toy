@@ -3,11 +3,6 @@ import numpy as np, json
 from . import cg, export, poly
 import math
 
-def loads(args, solver):
-    # name = args['class']
-    # if name == 'Elasticity': name = 'Elasticity_legacy'
-    return globals()[args['class']](args, solver)
-
 @ti.func
 def barrier(d: ti.f32, dm: ti.f32) -> ti.f32:
     return -(d - dm)**2 * ti.log(d / dm)
@@ -82,27 +77,26 @@ def collision_test(i, j, k, x, dm, v: ti.template(), d: ti.template()) -> ti.i32
 #     #     self.m = ti.field(dtype=ti.i32, shape=())
 #     #     self.m[None] = links.shape[0]
 
-#     def __init__(self, args, solver):
-#         tmp = solver.args.copy()
-#         tmp.update(args)
-#         args = tmp
-
-#         self.n = solver.n
+#     def __init__(self, args):
 #         self.k = args['k_collision']
 #         self.d_m = args['d_m']
-#         m_max = args['m_max']
+#         self.m_max = args['m_max']
+    
+#     def init(self, solver):
+#         self.n = solver.n
 
 #         links = args['links']
 #         if isinstance(links, str):
 #             links = export.b642np(links)
 #         links = np.array(links)
-#         self.vert = ti.Vector.field(2, dtype=ti.i32, shape=m_max)
-#         self.vert.from_numpy(np.resize(links, (m_max, 2)))
+#         self.vert = ti.Vector.field(2, dtype=ti.i32, shape=self.m_max)
+#         self.vert.from_numpy(np.resize(links, (self.m_max, 2)))
 #         self.m = ti.field(dtype=ti.i32, shape=())
 #         self.m[None] = links.shape[0]
     
 #     def dumps(self):
-#         return {'class': 'Collision', 'links': export.np2b64(self.vert.to_numpy()[:self.m[None]]), 'k_collision': self.k, 'd_m': self.d_m, 'm_max': self.m[None]}
+#         # return {'class': 'Collision', 'links': export.np2b64(self.vert.to_numpy()[:self.m[None]]), 'k_collision': self.k, 'd_m': self.d_m, 'm_max': self.m[None]}
+#         return {'class': 'Collision', 'links': self.vert.to_numpy()[:self.m[None]], 'k_collision': self.k, 'd_m': self.d_m, 'm_max': self.m[None]}
     
 #     @ti.kernel
 #     def ccd(self, x: ti.template(), dx: ti.template()) -> ti.f32:
@@ -143,11 +137,11 @@ def collision_test(i, j, k, x, dm, v: ti.template(), d: ti.template()) -> ti.i32
 #                 if collision_test(i, verts[j][0], verts[j][1], x, dm, v, d) == 1:
 #                     # print(i, j, verts[j], d, dm, barrier(d, dm))
 #                     ans += barrier(d, dm) * self.k
-#         for i in range(self.n[None]):
-#             for j in range(i):
-#                 xij = x[i] - x[j]
-#                 if xij.norm() > dm: continue
-#                 ans += barrier(xij.norm(), dm) * self.k
+#         # for i in range(self.n[None]):
+#         #     for j in range(i):
+#         #         xij = x[i] - x[j]
+#         #         if xij.norm() > dm: continue
+#         #         ans += barrier(xij.norm(), dm) * self.k
 #         return ans
 
 #     @ti.kernel
@@ -164,14 +158,14 @@ def collision_test(i, j, k, x, dm, v: ti.template(), d: ti.template()) -> ti.i32
 #                     dfdd = f_barrier(d, dm) * self.k
 #                     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
 #                     f[v[(k + 2) % 3]] += dfdd * dddx
-#         for i in range(self.n[None]):
-#             for j in range(i):
-#                 xij = x[i] - x[j]
-#                 if xij.norm() > dm: continue
-#                 dfdd = f_barrier(xij.norm(), dm) * self.k
-#                 dddx = xij.normalized()
-#                 f[i] += dfdd * dddx
-#                 f[j] -= dfdd * dddx
+#         # for i in range(self.n[None]):
+#         #     for j in range(i):
+#         #         xij = x[i] - x[j]
+#         #         if xij.norm() > dm: continue
+#         #         dfdd = f_barrier(xij.norm(), dm) * self.k
+#         #         dddx = xij.normalized()
+#         #         f[i] += dfdd * dddx
+#         #         f[j] -= dfdd * dddx
     
 #     @ti.kernel
 #     def df(self, f: ti.template(), x: ti.template(), dx: ti.template(), n: ti.i32):
@@ -195,42 +189,37 @@ def collision_test(i, j, k, x, dm, v: ti.template(), d: ti.template()) -> ti.i32
 #                     dddx = ti.Matrix([[0, -1], [1, 0]]) @ (x[v[(k + 1) % 3]] - x[v[k]]) / length
 #                     ddf = df_barrier(d, dm) * self.k
 #                     f[v[(k + 2) % 3]] += ddf * dddx * s
-#         for i in range(self.n[None]):
-#             for j in range(i):
-#                 xij = x[i] - x[j]
-#                 d = xij.norm()
-#                 if xij.norm() > dm: continue
-#                 ddf = df_barrier(d, dm) * self.k
-#                 dddx = xij * xij.dot(dx[i] - dx[j])
-#                 tmp = ddf * dddx
-#                 dfdd = f_barrier(d, dm) * self.k
-#                 ddd = (ti.Matrix.identity(ti.f32, 2) - xij.outer_product(xij) / xij.norm_sqr()) @ (dx[i] - dx[j]) / d
-#                 tmp += dfdd * ddd
-#                 f[i] += tmp
-#                 f[j] -= tmp
+#         # for i in range(self.n[None]):
+#         #     for j in range(i):
+#         #         xij = x[i] - x[j]
+#         #         d = xij.norm()
+#         #         if xij.norm() > dm: continue
+#         #         ddf = df_barrier(d, dm) * self.k
+#         #         dddx = xij * xij.dot(dx[i] - dx[j])
+#         #         tmp = ddf * dddx
+#         #         dfdd = f_barrier(d, dm) * self.k
+#         #         ddd = (ti.Matrix.identity(ti.f32, 2) - xij.outer_product(xij) / xij.norm_sqr()) @ (dx[i] - dx[j]) / d
+#         #         tmp += dfdd * ddd
+#         #         f[i] += tmp
+#         #         f[j] -= tmp
 
 @ti.data_oriented
 class Collision_sympy: # TODO: wip, vf only
-    def __init__(self, args, solver):
-        tmp = solver.args.copy()
-        tmp.update(args)
-        args = tmp
-
-        self.n = solver.n
+    def __init__(self, args):
         self.k = args['young']
         self.d_m = args['d_m']
-        self.dim = args['dim']
-        self.target = args['target']
-        m_max = args['m_max']
+    
+    def init(self, solver):
+        self.dim = solver.dim
+        self.target = solver.target
+        self.m_max = len(solver.tets)
 
-        faces = args['faces']
-        # if isinstance(faces, str):
-        #     faces = export.b642np(faces)
-        faces = np.array(faces)
-        self.faces = ti.Vector.field(self.dim, dtype=ti.i32, shape=m_max)
-        self.faces.from_numpy(np.resize(faces, (m_max, self.dim)))
+        self.n = solver.n
+        faces = solver.faces
+        self.faces = ti.Vector.field(self.dim, dtype=ti.i32, shape=self.m_max)
+        self.faces.from_numpy(np.resize(faces, (self.m_max, self.dim)))
         self.m = ti.field(dtype=ti.i32, shape=())
-        self.m[None] = faces.shape[0]
+        self.m[None] = len(faces)
     
     @ti.func
     def project2triangle(self, x_v_, x_face):
@@ -417,12 +406,10 @@ class Collision_sympy: # TODO: wip, vf only
 
 @ti.data_oriented
 class Gravity:
-    def __init__(self, args, solver):
-        tmp = solver.args.copy()
-        tmp.update(args)
-        args = tmp
-
+    def __init__(self, args):
         self.gravity = args['gravity']
+    
+    def init(self, solver):
         self.solver = solver
     
     def dumps(self):
@@ -618,40 +605,36 @@ def Ds(verts, x):
     
 @ti.data_oriented
 class Elasticity:
-    def __init__(self, args, solver):
-
-        Elasticity.arrays = ['vert', 'F_B', 'F_W']
-        tmp = solver.args.copy()
-        tmp.update(args)
-        args = tmp
-
-        self.dim = args['dim']
-        k = args['young']
-        nu = args['nu']
-
-        self.m = ti.field(dtype=ti.i32, shape=())
-        self.m_max = args['m_max']
-        self.k = k
-        self.nu = nu
+    def __init__(self, args):
+        self.k = args['young']
+        self.nu = args['nu']
+        k = self.k
+        nu = self.nu
         self.mu = k / (2 * (1 + nu))
         self.la = k * nu / ((1 + nu) * (1 - 2 * nu))
+    
+    def init(self, solver):
+        print('neo init')
+        self.dim = solver.dim
+        self.m_max = len(solver.tets)
+        self.m = ti.field(dtype=ti.i32, shape=())
+        self.m[None] = len(solver.tets)
         self.vert = ti.Vector.field(self.dim + 1, dtype=ti.i32, shape=self.m_max)
         self.F_B = ti.Matrix.field(self.dim, self.dim, dtype=ti.f32, shape=self.m_max)
         self.F_W = ti.field(dtype=ti.f32, shape=self.m_max)
 
-        for name in Elasticity.arrays:
-            if name not in args: continue
-            arr = args[name]
-            if isinstance(arr, str):
-                arr = export.b642np(arr)
-            arr = np.array(arr)
-            self.__dict__[name].from_numpy(np.resize(arr, (self.m_max, *arr.shape[1:])))
-            self.m[None] = arr.shape[0]
+        self.vert.from_numpy(np.resize(solver.tets, (self.m_max, self.dim + 1)))
+        self.init_k(solver.pos, solver.mass)
+
+
+        print(self.F_B)
+        print(self.F_W)
     
-    def dumps(self):
-        ans = {'class': 'Elasticity', 'young': self.k, 'nu': self.nu, 'm_max': self.m_max}
-        ans.update([[i, export.np2b64(self.__dict__[i].to_numpy()[:self.m[None]])] for i in Elasticity.arrays])
-        return ans
+    # def dumps(self):
+    #     ans = {'class': 'Elasticity', 'young': self.k, 'nu': self.nu, 'm_max': self.m_max}
+    #     # ans.update([[i, export.np2b64(self.__dict__[i].to_numpy()[:self.m[None]])] for i in Elasticity.arrays])
+    #     ans.update([[i, self.__dict__[i].to_numpy()[:self.m[None]]] for i in Elasticity.arrays])
+    #     return ans
     
     def add(self, vert):
         m = self.m[None]
@@ -664,10 +647,11 @@ class Elasticity:
         return ti.Matrix.cols([x[verts[i]] - x[verts[self.dim]] for i in range(self.dim)])
     
     @ti.kernel
-    def init(self, x: ti.template(), mass: ti.template()):
+    def init_k(self, x: ti.template(), mass: ti.template()):
         for i in range(self.m[None]):
             verts = self.vert[i]
             F = self.Ds(verts, x)
+            print(F)
             self.F_B[i] = F.inverse()
             self.F_W[i] = ti.abs(F.determinant()) / ti.static(math.factorial(self.dim))
             for j in ti.static(range(self.dim + 1)):
@@ -723,8 +707,10 @@ class Elasticity:
 
 @ti.data_oriented
 class Floor_3d:
-    def __init__(self, args, solver):
-        self.k = args['k']
+    def __init__(self, args):
+        self.k = args['young']
+    
+    def init(self, solver):
         self.solver = solver
 
     @ti.kernel
@@ -746,3 +732,11 @@ class Floor_3d:
         for i in range(n):
             if x[i].y >= 0: continue
             f[i].y += -self.k * dx[i].y
+
+
+mapping = {'gravity': Gravity, 'floor': Floor_3d, 'neohookean': Elasticity, 'collision': Collision_sympy}
+
+# def loads(args):
+#     # name = args['class']
+#     # if name == 'Elasticity': name = 'Elasticity_legacy'
+#     return globals()[args['class']](args, solver)

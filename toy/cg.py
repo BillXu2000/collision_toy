@@ -84,10 +84,13 @@ class newton:
                 # print(alpha)
             d_e = ene() - e_0
             # print(iter, e_0, d_e, alpha, abs(d_e / e_0))
-            if abs(d_e / e_0) < 1e-6: break
             if self.export:
                 ans = {'type': 'newton', 'pos': pos.to_numpy(), 'dx': dx.to_numpy(), 'force': force, 'i_n': iter, 'e_0': e_0, 'd_e': d_e, 'alpha': alpha, 'n': self.n[None]}
                 export.exporter.export(ans)
+            ans = {'type': 'newton', 'pos': pos.to_numpy(), 'dx': dx.to_numpy(), 'force': force, 'i_n': iter, 'e_0': e_0, 'd_e': d_e, 'alpha': alpha, 'n': self.n[None]}
+            export.exporter.record(ans)
+            # if abs(d_e / e_0) < 1e-6: break
+            if d_e < 1e-6 and iter > 2: break # FIXME: hack termination condition
             ax_by(pos, 1, pos, alpha, dx)
             # self.canvas.circles(centers=pos, radius=.01, color=(.6, 0, 0))
             # mi = pos.to_numpy()[:3, 1].min()
