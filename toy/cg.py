@@ -76,7 +76,7 @@ class newton:
             def ene():
                 ax_by(x_1, 1, pos, alpha, dx)
                 ans = energy(x_1)
-                # print(f'alpha = {alpha}, ans = {ans}, e_0 = {e_0}')
+                print(f'alpha = {alpha}, ans = {ans}, e_0 = {e_0}')
                 # if alpha < 1e-9: exit(0)
                 return ans
             while not ene() <= e_0:
@@ -90,7 +90,7 @@ class newton:
             ans = {'type': 'newton', 'pos': pos.to_numpy(), 'dx': dx.to_numpy(), 'force': force, 'i_n': iter, 'e_0': e_0, 'd_e': d_e, 'alpha': alpha, 'n': self.n[None]}
             export.exporter.record(ans)
             # if abs(d_e / e_0) < 1e-6: break
-            if d_e < 1e-6 and iter > 2: break # FIXME: hack termination condition
+            if d_e < 1e-12 and iter > 2: break # FIXME: hack termination condition
             ax_by(pos, 1, pos, alpha, dx)
             # self.canvas.circles(centers=pos, radius=.01, color=(.6, 0, 0))
             # mi = pos.to_numpy()[:3, 1].min()
@@ -115,10 +115,10 @@ class newton:
         p.copy_from(r)
         r_2 = dot(r, r)
         r_0 = r_2
-        n_iter = 20
+        n_iter = 100
         # eps = 1e-6 * r_0 # TODO: reasonable epsilon
-        eps = 1e-12
-        if r_0 < 1e-20: return x
+        eps = 1e-40
+        if r_0 < eps: return x
         for iter in range(n_iter):
             A(A_p, p)
             dot_ans = dot(p, A_p)

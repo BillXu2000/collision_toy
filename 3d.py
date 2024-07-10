@@ -30,15 +30,15 @@ if __name__ == '__main__':
 
     ti.init(arch=ti.cpu)
     solver = toy.solver.ImplicitSolver()
-    solver.load_config_file('./scratch/config.txt')
     solver.target = get_vf_target()
-    solver.init()
+    solver.load_config_file('./config.sh')
+
     
 
     res = (1920, 1080)
     window = ti.ui.Window("cloth", res, vsync=True)
     camera = ti.ui.make_camera()
-    camera.position(1.5, 2.0, 1.95)
+    camera.position(-3.0, 3.0, 3.0)
     camera.lookat(0.5, 0.3, 0.5)
     camera.fov(55)
 
@@ -73,20 +73,22 @@ if __name__ == '__main__':
             debug_pos[i] = state.pos[i] + debug_force[i] / state.mass[i] * state.dt[None]
 
     n_stop = -1
-    i_f = 0
-    frames = [state.dumps()]
-    flag_change = False
+    if 'pause' in solver.args: n_stop = 0
+    # i_f = 0
+    # frames = [state.dumps()]
     gui = window.get_gui()
-    exporter = toy.export.exporter
+    # exporter = toy.export.exporter
     while window.running:
-        i_new = gui.slider_int('i_f', i_f, 0, len(frames) - 1)
+        frames = solver.frames
+        i_new = gui.slider_int('i_f', solver.i_f, 0, len(frames) - 1)
         i_new = min(i_new, len(frames) - 1)
-        if i_new != i_f or flag_change:
-            state.load_xv(frames[i_new])
-            i_f = i_new
-            pause = True
-            flag_change = False
-        exporter.set_i_f(i_f)
+        solver.load_frame(i_new)
+        # if i_new != i_f or flag_change:
+        #     state.load_xv(frames[i_new])
+        #     i_f = i_new
+        #     pause = True
+        #     flag_change = False
+        # exporter.set_i_f(i_f)
         camera.track_user_inputs(window, movement_speed=0.1, hold_key=ti.ui.RMB)
         scene.set_camera(camera)
 
@@ -107,25 +109,25 @@ if __name__ == '__main__':
             if event.key in ['o']:
                 mesh = meshio.Mesh(state.pos.to_numpy()[:state.n[None]], {'triangle': faces})
                 mesh.write('test.ply')
-            if event.key in ['k']:
-                i_f = max(0, i_f - 1)
-                flag_change = True
             if event.key in ['j']:
-                i_f = min(len(frames) - 1, i_f + 1)
-                flag_change = True
+                solver.load_prev_frame()
+            if event.key in ['k']:
+                solver.load_next_frame()
             if event.key in ['v']:
                 fig, ax = plt.subplots()
                 X = []
                 Y = []
                 for i, f in enumerate(frames):
                     X.append(i)
-                    tmp = f['vel']
+                    tmp = np.array(f['vel'])
+                    # print(tmp)
                     Y.append((tmp**2).sum()**.5)
                 Y = np.array(Y)
                 ax.set_yscale('log')
                 ax.plot(X, Y, marker='o')
                 plt.subplots_adjust(left=0.2)
                 plt.grid(True)
+                plt.title('norm of velocity')
                 plt.show()
                 
 
@@ -141,18 +143,19 @@ if __name__ == '__main__':
 
         if n_stop != 0:
             state.substep()
-            i_f += 1
-            if len(frames) == i_f:
-                frames.append(None)
-            frames[i_f] = state.dumps()
+            # i_f += 1
+            # if len(frames) == i_f:
+            #     frames.append(None)
+            # frames[i_f] = state.dumps()
             if n_stop > 0: n_stop -= 1
         
         # debug_force.fill(0)
         # collision.force(debug_force, state.pos, state.n[None])
         # get_debug_pos()
-        if i_f in exporter.newton:
-            if 1 in exporter.newton[i_f]:
-                debug_pos.from_numpy(exporter.newton[i_f][1]['pos'])
+
+        # if i_f in exporter.newton:
+        #     if 1 in exporter.newton[i_f]:
+        #         debug_pos.from_numpy(exporter.newton[i_f][1]['pos'])
 
         scene.mesh(vertices=state.pos, indices=indices)
         scene.lines(vertices=x_frame, width=1, indices=indices_frame)

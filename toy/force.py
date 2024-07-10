@@ -212,7 +212,7 @@ class Collision_sympy: # TODO: wip, vf only
     def init(self, solver):
         self.dim = solver.dim
         self.target = solver.target
-        self.m_max = len(solver.tets)
+        self.m_max = len(solver.faces)
 
         self.n = solver.n
         faces = solver.faces
@@ -220,6 +220,7 @@ class Collision_sympy: # TODO: wip, vf only
         self.faces.from_numpy(np.resize(faces, (self.m_max, self.dim)))
         self.m = ti.field(dtype=ti.i32, shape=())
         self.m[None] = len(faces)
+        print(self.m[None], self.faces.to_numpy())
     
     @ti.func
     def project2triangle(self, x_v_, x_face):
