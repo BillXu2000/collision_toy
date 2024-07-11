@@ -5,6 +5,7 @@ import meshio
 import re
 import time
 import os
+import matplotlib.pyplot as plt
 from . import cg, export, force
 
 def load_mesh(fn):
@@ -274,8 +275,12 @@ class ImplicitSolver:
         for i in range(self.n[None]):
             if self.mass[i] == -1: delta[i] = 0
         delta /= (delta**2).sum()**.5
-        for i in range(10):
-            step = 10**-i
+
+        fig, ax = plt.subplots()
+        X = []
+        Y = []
+        for i in range(30):
+            step = 2**-i
             self.x_tmp.from_numpy(x0 + delta * step)
             ei = self.energy(self.x_tmp)
             # print(i, ei - (e0 + (df * delta * step).sum()))
@@ -283,6 +288,15 @@ class ImplicitSolver:
             err = abs((ei - e0) / step - ref)
             # print(i, err / e0, err, (df * delta).sum(), ei - e0, e0)
             print(i, abs(err / ref), err, (df * delta).sum(), ei, e0)
+            X.append(step)
+            Y.append(abs(err / ref))
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.plot(X, Y, marker='o')
+        plt.subplots_adjust(left=0.2)
+        plt.grid(True)
+        plt.title('finite diffrence')
+        plt.show()
 
     @ti.kernel
     def energy_k(self, x: ti.template()) -> ti.f32:

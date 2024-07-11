@@ -9,10 +9,10 @@ fixed 0:
 
 $young 1e5
 
-gravity {"gravity": [0, -9.8, 0]}
+# gravity {"gravity": [0, -9.8, 0]}
 # floor {"young": $young}
-neohookean {"young": $young, "nu": 0.3}
-collision {"young": $young, "d_m": 1e-2}
+# neohookean {"young": $young, "nu": 0.3}
+# collision {"young": $young, "d_m": 1e-2}
 
 initialize
 
