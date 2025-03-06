@@ -14,6 +14,25 @@ def getvars(f, constant=set()):
     vars.sort(key=lambda x: x.name)
     return vars
 
+class Intermediate(sympy.Symbol):
+    def add(self, exp):
+        self.exp = exp
+        return self
+    
+    def print(self):
+        print(self.exp)
+        # display(self.exp)
+
+class InterPartial(Intermediate):
+    def add_child(self, c):
+        self.child = c
+        return self
+    
+    @classmethod
+    def build(cls, inter):
+        ans = InterPartial(r'\partial ' + inter.name).add_child(inter)
+        return ans
+
 def get_partial(e, is_constant = lambda x: False):
     hack = sympy.Symbol('(Hack)')
     vars = set()
@@ -21,11 +40,12 @@ def get_partial(e, is_constant = lambda x: False):
         if isinstance(i, sympy.Symbol) and not is_constant(i):
             vars.add(i)
     for y in vars:
-        e = e.replace(y, sympy.Function(f'f(hack){y.name}')(hack))
+        e = e.replace(y, sympy.Function(f'f(hack)')(hack, y))
     pe = e.diff(hack)
     for y in vars:
-        pe = pe.replace(sympy.Function(f'f(hack){y.name}')(hack).diff(hack), sympy.Symbol(r'\partial %s' % y.name))
-        pe = pe.replace(sympy.Function(f'f(hack){y.name}')(hack), y)
+        pe = pe.replace(sympy.Function(f'f(hack)')(hack, y).diff(hack), InterPartial.build(y))
+        # pe = pe.replace(sympy.Function(f'f(hack)')(hack, y).diff(hack), InterPartial(y).add_child(y))
+        pe = pe.replace(sympy.Function(f'f(hack)')(hack, y), y)
     return pe
 
 class Cross(sympy.Function):
@@ -43,6 +63,15 @@ class Cross(sympy.Function):
         return r'%s \times %s' % tuple(_args)
 
 class Dot(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x == 0 or y == 0:
+            return 0
+
+    def _eval_derivative(self, s):
+        x, y = self.args
+        return Dot(x.diff(s), y) + Dot(x, y.diff(s))
+
     def _latex(self, printer):
         _args = [printer._print(i) for i in self.args]
         return r'%s \cdot %s' % tuple(_args)
