@@ -1,3 +1,5 @@
+# deprecated; new version in squeezeIPC
+
 import sympy
 
 sympy.Mul
